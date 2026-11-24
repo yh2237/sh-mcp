@@ -1,0 +1,166 @@
+package security
+
+import (
+	"errors"
+	"os"
+	"path/filepath"
+	"runtime"
+	"testing"
+)
+
+func TestMatchGlob(t *testing.T) {
+	cases := []struct {
+		pat, name string
+		want      bool
+	}{
+		{"**/.env", "/home/u/proj/.env", true},
+		{"**/.env", "C:/Users/u/.env", true},
+		{"**/.env", "/home/u/proj/.env.local", false},
+		{"**/.env.*", "/home/u/proj/.env.local", true},
+		{"**/*.pem", "/a/b/c/server.pem", true},
+		{"**/*id_rsa*", "/home/u/.ssh/id_rsa.pub", true},
+		{"src/**/*.go", "src/a/b/c.go", true},
+		{"src/**/*.go", "src/c.go", true},
+		{"src/**/*.go", "lib/c.go", false},
+		{"*.go", "a.go", true},
+		{"*.go", "dir/a.go", false},
+		{"node_modules", "node_modules", true},
+		{"**", "anything/at/all", true},
+	}
+	for _, c := range cases {
+		if got := MatchGlob(c.pat, c.name); got != c.want {
+			t.Errorf("MatchGlob(%q, %q) = %v, want %v", c.pat, c.name, got, c.want)
+		}
+	}
+}
+
+func newGuard(t *testing.T) (*Guard, string) {
+	t.Helper()
+	dir := t.TempDir()
+	// Resolve the temp dir itself (macOS /var -> /private/var, Windows 8.3 names).
+	dir, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	root := filepath.Join(dir, "root")
+	if err := os.MkdirAll(filepath.Join(root, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g, err := NewGuard([]string{root}, []string{"**/.env", "**/*.pem"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(g.Close)
+	return g, root
+}
+
+func TestGuardResolve(t *testing.T) {
+	g, root := newGuard(t)
+
+	r, err := g.Resolve("sub/file.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Abs != filepath.Join(root, "sub", "file.txt") || r.Rel != filepath.Join("sub", "file.txt") {
+		t.Errorf("got Abs=%s Rel=%s", r.Abs, r.Rel)
+	}
+	if r, err := g.Resolve(root); err != nil || r.Rel != "." {
+		t.Errorf("root itself: %v %v", r, err)
+	}
+
+	for _, p := range []string{"../outside.txt", "sub/../../outside.txt", filepath.Dir(root)} {
+		if _, err := g.Resolve(p); !errors.Is(err, ErrOutsideRoots) {
+			t.Errorf("Resolve(%q) err = %v, want ErrOutsideRoots", p, err)
+		}
+	}
+	for _, p := range []string{".env", "sub/.env", "sub/key.pem"} {
+		if _, err := g.Resolve(p); !errors.Is(err, ErrDenied) {
+			t.Errorf("Resolve(%q) err = %v, want ErrDenied", p, err)
+		}
+	}
+	if runtime.GOOS == "windows" {
+		for _, p := range []string{`sub\file.txt:secret`, `\\server\share\x`, `\\?\C:\x`} {
+			if _, err := g.Resolve(p); err == nil {
+				t.Errorf("Resolve(%q) succeeded, want error", p)
+			}
+		}
+	}
+}
+
+func TestGuardCaseInsensitiveDeny(t *testing.T) {
+	if !caseInsensitiveFS {
+		t.Skip("case-sensitive filesystem")
+	}
+	g, _ := newGuard(t)
+	if _, err := g.Resolve("sub/KEY.PEM"); !errors.Is(err, ErrDenied) {
+		t.Errorf("err = %v, want ErrDenied", err)
+	}
+}
+
+func TestGuardSymlinks(t *testing.T) {
+	g, root := newGuard(t)
+	outside := filepath.Join(filepath.Dir(root), "outside")
+	if err := os.MkdirAll(outside, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("s"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(root, ".env"), []byte("TOKEN=x"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outside, filepath.Join(root, "escape")); err != nil {
+		t.Skipf("cannot create symlinks: %v", err)
+	}
+	if err := os.Symlink(filepath.Join(root, ".env"), filepath.Join(root, "innocent.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	// The path is lexically inside the root; os.Root must refuse to follow
+	// the link out of it.
+	r, err := g.Resolve("escape/secret.txt")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.Root.ReadFile(r.Rel); err == nil {
+		t.Error("read through symlink escaped the root")
+	}
+
+	// A link to a denied file is denied by its target name.
+	if _, err := g.Resolve("innocent.txt"); !errors.Is(err, ErrDenied) {
+		t.Errorf("symlink to .env: err = %v, want ErrDenied", err)
+	}
+}
+
+func TestCommandPolicy(t *testing.T) {
+	exe, err := os.Executable()
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, missing := NewCommandPolicy(false, []string{"go", "definitely-not-a-command-xyz"}, nil, nil)
+	if len(missing) != 1 {
+		t.Errorf("missing = %v", missing)
+	}
+	if _, err := p.Resolve("go", "."); err != nil {
+		t.Errorf("go should be allowed: %v", err)
+	}
+	if _, err := p.Resolve(exe, "."); !errors.Is(err, ErrCommandNotAllowed) {
+		t.Errorf("unlisted command: err = %v", err)
+	}
+
+	u, _ := NewCommandPolicy(true, nil, nil, nil)
+	if _, err := u.Resolve("go", "."); err != nil {
+		t.Errorf("unrestricted go: %v", err)
+	}
+}
+
+func TestEnvExcludesSecrets(t *testing.T) {
+	t.Setenv("SH_MCP_AUTH_TOKEN", "secret")
+	t.Setenv("PATH", os.Getenv("PATH"))
+	p, _ := NewCommandPolicy(true, nil, []string{"SH_MCP_AUTH_TOKEN"}, []string{"SH_MCP_AUTH_TOKEN"})
+	for _, kv := range p.Env() {
+		if len(kv) > 17 && kv[:18] == "SH_MCP_AUTH_TOKEN=" {
+			t.Fatal("secret leaked into child environment")
+		}
+	}
+}

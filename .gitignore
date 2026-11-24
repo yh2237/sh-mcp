@@ -1,1 +1,5 @@
 notes/
+bin/
+dist/
+*.exe
+*.test

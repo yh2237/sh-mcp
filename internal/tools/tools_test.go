@@ -1,13 +1,15 @@
-﻿package tools
+package tools
 
 import (
 	"bufio"
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"unicode"
 	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -94,5 +96,23 @@ func TestIsSubPathCaseSensitivity(t *testing.T) {
 	wantCaseInsensitive := runtime.GOOS == "windows" || runtime.GOOS == "darwin"
 	if got := isSubPath("dir/sub", "Dir"); got != wantCaseInsensitive {
 		t.Errorf("isSubPath(dir/sub, Dir) = %v, want %v on %s", got, wantCaseInsensitive, runtime.GOOS)
+	}
+}
+
+func TestWriteStdinSchemaHasNoControlChars(t *testing.T) {
+	f, ok := reflect.TypeFor[writeStdinInput]().FieldByName("Input")
+	if !ok {
+		t.Fatal("writeStdinInput.Input not found")
+	}
+	desc := f.Tag.Get("jsonschema")
+	for _, r := range desc {
+		if unicode.IsControl(r) {
+			t.Fatalf("jsonschema tag contains raw control character %U: %q", r, desc)
+		}
+	}
+	for _, want := range []string{`\n`, `\u0003`, `\u0004`, `\u001b`} {
+		if !strings.Contains(desc, want) {
+			t.Errorf("jsonschema tag missing %q: %q", want, desc)
+		}
 	}
 }

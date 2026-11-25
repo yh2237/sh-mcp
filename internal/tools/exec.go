@@ -57,7 +57,7 @@ type listJobsInput struct{}
 
 type writeStdinInput struct {
 	JobID   string `json:"job_id"`
-	Input   string `json:"input,omitempty" jsonschema:"keys to type into the job's terminal; end a line with \n. Control keys are JSON escapes: \u0003 Ctrl-C, \u0004 Ctrl-D (end of input), \u001b Escape, \u001b[A up arrow. Empty input just reads new output"`
+	Input   string `json:"input,omitempty" jsonschema:"keys to type into the job's terminal; end a line with \\n. Control keys are JSON escapes: \\u0003 Ctrl-C, \\u0004 Ctrl-D (end of input), \\u001b Escape, \\u001b[A up arrow. Empty input just reads new output"`
 	WaitSec *int   `json:"wait_sec,omitempty" jsonschema:"seconds to wait for output at most, 0-120 (default 5); returns as soon as the output pauses"`
 }
 

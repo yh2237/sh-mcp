@@ -713,9 +713,16 @@ func TestReadManyFiles(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	out := h.ok("read_file", map[string]any{"paths": []string{"a.txt", "missing.txt", "b.txt"}})
-	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") || !strings.Contains(out, "error: missing.txt") {
-		t.Errorf("multi read: %s", out)
+	// All text comes back as one content item (some clients only use the last).
+	res := h.result("read_file", map[string]any{"paths": []string{"a.txt", "missing.txt", "b.txt"}})
+	if len(res.Content) != 1 {
+		t.Fatalf("multi read returned %d content items, want 1", len(res.Content))
+	}
+	out := res.Content[0].(*mcp.TextContent).Text
+	for _, want := range []string{"==> a.txt <==\n", "alpha", "==> missing.txt <==\nerror: ", "==> b.txt <==\n", "beta"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("multi read lacks %q: %s", want, out)
+		}
 	}
 	// An image larger than what is left of the shared budget is refused
 	// (it would be read whole); the other files still come back.

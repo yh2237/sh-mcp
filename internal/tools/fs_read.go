@@ -104,12 +104,29 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 	// The files share one output budget, so many large files cannot flood the
 	// context: each gets a fair share of what is left (never more than a
 	// single read returns), and images must fit in what is left.
+	//
+	// Text from all files goes into one content item, each file under a
+	// "==> path <==" header: some clients (Gemini) only show the model the
+	// last text item. Images stay separate items.
 	var out []mcp.Content
+	var text strings.Builder
+	flush := func() {
+		if text.Len() > 0 {
+			out = append(out, &mcp.TextContent{Text: text.String()})
+			text.Reset()
+		}
+	}
+	addText := func(s string) {
+		if text.Len() > 0 {
+			text.WriteString("\n\n")
+		}
+		text.WriteString(s)
+	}
 	budget := maxMultiReadBytes
 	for i, p := range in.Paths {
 		if budget <= 0 {
-			out = append(out, &mcp.TextContent{Text: fmt.Sprintf("skipped %d file(s) (%s, ...): output limit reached; read them in another call",
-				len(in.Paths)-i, p)})
+			addText(fmt.Sprintf("skipped %d file(s) (%s, ...): output limit reached; read them in another call",
+				len(in.Paths)-i, p))
 			break
 		}
 		share := min(max(budget/(len(in.Paths)-i), 4<<10), maxReadOutput, budget)
@@ -118,21 +135,28 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			msg := &mcp.TextContent{Text: fmt.Sprintf("error: %s: %v", p, err)}
-			budget -= len(msg.Text)
-			out = append(out, msg)
+			msg := fmt.Sprintf("==> %s <==\nerror: %v", p, err)
+			budget -= len(msg)
+			addText(msg)
 			continue
 		}
+		addText(fmt.Sprintf("==> %s <==", p))
 		for _, c := range content {
 			switch c := c.(type) {
 			case *mcp.TextContent:
 				budget -= len(c.Text)
+				if text.Len() > 0 {
+					text.WriteString("\n")
+				}
+				text.WriteString(c.Text)
 			case *mcp.ImageContent:
 				budget -= len(c.Data)
+				flush()
+				out = append(out, c)
 			}
 		}
-		out = append(out, content...)
 	}
+	flush()
 	return out, nil
 }
 

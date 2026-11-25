@@ -78,9 +78,10 @@ type lineTerm struct {
 	out []byte
 	// cells are the screen columns of the current line: one character each,
 	// "" for the second column of a wide character.
-	cells []string
-	col   int
-	row   int // 1-based screen row of the current line
+	cells  []string
+	col    int
+	row    int // 1-based screen row of the current line
+	blanks int // consecutive blank lines already emitted
 }
 
 // feed processes b and returns how many bytes were used; the rest is an
@@ -168,14 +169,23 @@ func (t *lineTerm) text() string {
 	return strings.TrimRight(strings.Join(t.cells, ""), " ")
 }
 
-func (t *lineTerm) flush() {
-	t.out = append(t.out, t.text()...)
+func (t *lineTerm) emitLine() {
+	s := t.text()
 	t.cells, t.col = t.cells[:0], 0
+	if s == "" {
+		if t.blanks >= maxBlankLines {
+			return
+		}
+		t.blanks++
+	} else {
+		t.blanks = 0
+		t.out = append(t.out, s...)
+	}
+	t.out = append(t.out, '\n')
 }
 
 func (t *lineTerm) newline() {
-	t.flush()
-	t.out = append(t.out, '\n')
+	t.emitLine()
 	t.row++
 }
 
@@ -186,12 +196,10 @@ func (t *lineTerm) moveTo(row, col int) {
 	switch {
 	case row > t.row:
 		for i := 0; i < min(row-t.row, maxBlankLines+1); i++ {
-			t.flush()
-			t.out = append(t.out, '\n')
+			t.emitLine()
 		}
 	case row < t.row && len(t.cells) > 0:
-		t.flush()
-		t.out = append(t.out, '\n')
+		t.emitLine()
 	}
 	t.row, t.col = row, clampCol(col)
 }

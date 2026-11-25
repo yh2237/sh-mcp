@@ -35,9 +35,11 @@ func TestStripTerminal(t *testing.T) {
 			"\x1b[?25l\x1b[6D\x1b[1;35m>>> \x1b[0m[1]\x1b[7D\x1b[?12l\x1b[?25h\x1b[7C\x1b[7D\n\r[1]\r\n": ">>> [1]\n[1]\n",
 		// Windows' pseudo-console skips lines by moving the cursor down.
 		"\x1b[2J\x1b[m\x1b[HMicrosoft Windows\x1b]0;cmd.exe\a\r\n(c) Microsoft.\x1b[4;1HC:\\>": "Microsoft Windows\n(c) Microsoft.\n\nC:\\>",
-		"top\x1b[30;1Hbottom":                     "top\n\n\nbottom",
-		"abc\x1b[1;5HX":                           "abc X",
-		"line one\r\nline two\x1b[1A\x1b[1Gagain": "line one\nline two\nagain",
+		"top\x1b[30;1Hbottom": "top\n\n\nbottom",
+		"top\x1b[2;1H\x1b[3;1H\x1b[4;1H\x1b[5;1H\x1b[6;1Hbottom": "top\n\n\nbottom",
+		"a\r\n\r\n\r\n\r\n\r\nb":                                 "a\n\n\nb",
+		"abc\x1b[1;5HX":                                          "abc X",
+		"line one\r\nline two\x1b[1A\x1b[1Gagain":                "line one\nline two\nagain",
 	}
 	for in, want := range cases {
 		if got := strip([]byte(in)); got != want {

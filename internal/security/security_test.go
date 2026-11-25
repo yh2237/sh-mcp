@@ -220,3 +220,26 @@ func TestEnvPythonUTF8(t *testing.T) {
 		t.Errorf("owner's PYTHONUTF8 not kept: %v", env)
 	}
 }
+
+func TestGuardDirsPreserveOrder(t *testing.T) {
+	base := t.TempDir()
+	zdir := filepath.Join(base, "z-dir")
+	adir := filepath.Join(base, "a-dir")
+	for _, d := range []string{zdir, adir} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g, err := NewGuard([]string{zdir, adir}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	want := []string{zdir, adir}
+	if got := g.Dirs(); !slices.Equal(got, want) {
+		t.Errorf("Dirs() = %v, want %v", got, want)
+	}
+	if g.DefaultDir() != zdir {
+		t.Errorf("DefaultDir() = %q, want %q", g.DefaultDir(), zdir)
+	}
+}

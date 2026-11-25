@@ -21,6 +21,7 @@ var (
 // ".." and symlink escapes atomically at open time (no check-then-use race).
 type Guard struct {
 	roots  []rootEntry // sorted longest dir first so nested roots win
+	dirs   []string    // allowed dirs in configured order (dirs[0] is def)
 	deny   []string
 	except []string
 	def    string
@@ -68,6 +69,7 @@ func NewGuard(dirs, denyGlobs []string) (*Guard, error) {
 			g.Close()
 			return nil, fmt.Errorf("open allowed dir %s: %w", d, err)
 		}
+		g.dirs = append(g.dirs, d)
 		g.roots = append(g.roots, rootEntry{dir: d, root: r})
 	}
 	sort.SliceStable(g.roots, func(i, j int) bool { return len(g.roots[i].dir) > len(g.roots[j].dir) })
@@ -83,12 +85,7 @@ func (g *Guard) Close() {
 func (g *Guard) DefaultDir() string { return g.def }
 
 func (g *Guard) Dirs() []string {
-	out := make([]string, len(g.roots))
-	for i, r := range g.roots {
-		out[i] = r.dir
-	}
-	sort.Strings(out)
-	return out
+	return append([]string(nil), g.dirs...)
 }
 
 // Abs returns the cleaned absolute form of p (relative paths are relative to

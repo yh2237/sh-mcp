@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -202,5 +203,20 @@ func TestEnvExcludesSecrets(t *testing.T) {
 		if len(kv) > 17 && kv[:18] == "SH_MCP_AUTH_TOKEN=" {
 			t.Fatal("secret leaked into child environment")
 		}
+	}
+}
+
+func TestEnvPythonUTF8(t *testing.T) {
+	t.Setenv("PYTHONUTF8", "") // restored after the test
+	os.Unsetenv("PYTHONUTF8")
+	p, _ := NewCommandPolicy(nil, nil, nil)
+	if got := slices.Contains(p.Env(), "PYTHONUTF8=1"); got != (runtime.GOOS == "windows") {
+		t.Errorf("PYTHONUTF8=1 set: %v on %s", got, runtime.GOOS)
+	}
+	// The owner's own setting wins.
+	t.Setenv("PYTHONUTF8", "0")
+	p, _ = NewCommandPolicy(nil, nil, nil)
+	if env := p.Env(); !slices.Contains(env, "PYTHONUTF8=0") || slices.Contains(env, "PYTHONUTF8=1") {
+		t.Errorf("owner's PYTHONUTF8 not kept: %v", env)
 	}
 }

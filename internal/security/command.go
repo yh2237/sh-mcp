@@ -131,7 +131,7 @@ var baseEnvCommon = []string{
 	"GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "GOENV", "GOFLAGS", "GOTOOLCHAIN",
 	"GOPROXY", "GONOPROXY", "GOPRIVATE", "GONOSUMDB", "GOSUMDB",
 	"CARGO_HOME", "RUSTUP_HOME", "JAVA_HOME", "NVM_DIR", "NODE_PATH",
-	"PYENV_ROOT", "VIRTUAL_ENV",
+	"PYENV_ROOT", "VIRTUAL_ENV", "PYTHONUTF8",
 	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
 	"http_proxy", "https_proxy", "no_proxy", "all_proxy",
 	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
@@ -189,5 +189,10 @@ func buildEnv(passthrough, secret []string) []string {
 	// Never block on interactive prompts: stdin is empty anyway, but git
 	// would otherwise try /dev/tty for credentials.
 	env = append(env, "GIT_TERMINAL_PROMPT=0", "GIT_PAGER=cat", "PAGER=cat")
+	// Python on Windows reads and writes pipes in the ANSI code page unless
+	// told otherwise; everything else here (and run_shell) speaks UTF-8.
+	if _, set := os.LookupEnv("PYTHONUTF8"); runtime.GOOS == "windows" && !set {
+		env = append(env, "PYTHONUTF8=1")
+	}
 	return env
 }

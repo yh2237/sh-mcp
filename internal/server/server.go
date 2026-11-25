@@ -2,6 +2,7 @@ package server
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -77,6 +78,19 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 		Instructions: instructions,
 		Logger:       log,
 	})
+	// Clients identify themselves with initialize, or with server/discover in
+	// protocol versions from 2026-07-28 on.
+	s.AddReceivingMiddleware(func(next mcp.MethodHandler) mcp.MethodHandler {
+		return func(ctx context.Context, method string, req mcp.Request) (mcp.Result, error) {
+			res, err := next(ctx, method, req)
+			if err == nil && (method == "initialize" || method == "server/discover") {
+				if ss, ok := req.GetSession().(*mcp.ServerSession); ok {
+					logClient(log, ss.InitializeParams())
+				}
+			}
+			return res, err
+		}
+	})
 	tools.Register(s, deps)
 
 	log.Info("sh-mcp configured",
@@ -87,6 +101,22 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 		"tools", tools.ToolNames(cfg),
 	)
 	return &Server{cfg: cfg, log: log, deps: deps, server: s, oauth: oa}, nil
+}
+
+// logClient records who connected and what the client says it supports, such
+// as elicitation, which decides how features that need the user can work.
+func logClient(log *slog.Logger, p *mcp.InitializeParams) {
+	if p == nil {
+		return
+	}
+	attrs := []any{"protocol_version", p.ProtocolVersion}
+	if p.ClientInfo != nil {
+		attrs = append(attrs, "client", p.ClientInfo.Name, "client_version", p.ClientInfo.Version)
+	}
+	if caps, err := json.Marshal(p.Capabilities); err == nil {
+		attrs = append(attrs, "capabilities", json.RawMessage(caps))
+	}
+	log.Info("client connected", attrs...)
 }
 
 // resolveProgram finds an MCP server program. Configured servers were chosen

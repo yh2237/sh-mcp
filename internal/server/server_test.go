@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -63,6 +64,68 @@ func newHarness(t *testing.T, mode string, mutate func(*config.Config)) *harness
 	}
 	t.Cleanup(func() { cs.Close() })
 	return &harness{t: t, dir: dir, sess: cs}
+}
+
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+func TestLogsClientCapabilities(t *testing.T) {
+	cfg := config.Default()
+	cfg.AllowedDirs = []string{t.TempDir()}
+	if err := cfg.Finalize(); err != nil {
+		t.Fatal(err)
+	}
+	var logs syncBuffer
+	srv, err := New(cfg, "test", slog.New(slog.NewJSONHandler(&logs, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(srv.Close)
+
+	ctx := context.Background()
+	st, ct := mcp.NewInMemoryTransports()
+	ss, err := srv.MCP().Connect(ctx, st, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { ss.Close() })
+	client := mcp.NewClient(&mcp.Implementation{Name: "elicit-client", Version: "1.2.3"}, &mcp.ClientOptions{
+		ElicitationHandler: func(context.Context, *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+			return &mcp.ElicitResult{Action: "decline"}, nil
+		},
+	})
+	cs, err := client.Connect(ctx, ct, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cs.Close() })
+
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(logs.String(), `"msg":"client connected"`) {
+		if time.Now().After(deadline) {
+			t.Fatalf("no client log line:\n%s", logs.String())
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	for _, want := range []string{`"client":"elicit-client"`, `"client_version":"1.2.3"`, `"elicitation":`} {
+		if !strings.Contains(logs.String(), want) {
+			t.Errorf("log lacks %s:\n%s", want, logs.String())
+		}
+	}
 }
 
 func (h *harness) result(name string, args map[string]any) *mcp.CallToolResult {

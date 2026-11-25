@@ -611,21 +611,21 @@ func TestRunningJobOutputIsContiguous(t *testing.T) {
 }
 
 func TestMoveRefusesProtectedTree(t *testing.T) {
-	h := newHarness(t, config.ModeFull, func(c *config.Config) { c.DenyGlobs = append(c.DenyGlobs, "**/private/**") })
-	if err := os.MkdirAll(filepath.Join(h.dir, "private", "sub"), 0o755); err != nil {
+	h := newHarness(t, config.ModeFull, func(c *config.Config) { c.DenyGlobs = append(c.DenyGlobs, "**/vault/**") })
+	if err := os.MkdirAll(filepath.Join(h.dir, "vault", "sub"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.dir, "private", "sub", "notes.txt"), []byte("secret"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.dir, "vault", "sub", "notes.txt"), []byte("secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.MkdirAll(filepath.Join(h.dir, "box", "private"), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Join(h.dir, "box", "vault"), 0o755); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(h.dir, "box", "private", "key.txt"), []byte("secret"), 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(h.dir, "box", "vault", "key.txt"), []byte("secret"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	h.fail("move_file", map[string]any{"source": "box", "destination": "public"}, "protected by --deny-glob")
-	if _, err := os.Stat(filepath.Join(h.dir, "box", "private", "key.txt")); err != nil {
+	if _, err := os.Stat(filepath.Join(h.dir, "box", "vault", "key.txt")); err != nil {
 		t.Errorf("refused move changed the tree: %v", err)
 	}
 	h.ok("write_file", map[string]any{"path": "plain/a.txt", "content": "a", "create_dirs": true})

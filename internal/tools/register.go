@@ -2,6 +2,7 @@ package tools
 
 import (
 	"context"
+	"errors"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -38,9 +39,9 @@ func Register(s *mcp.Server, d *Deps) {
 }
 
 // ProxyEnabled reports whether the MCP relay tools are offered: when the
-// owner configured servers, or in full mode where the agent may start them.
+// owner configured servers, or when the agent may start servers itself.
 func ProxyEnabled(cfg *config.Config) bool {
-	return len(cfg.MCPServers) > 0 || cfg.CanWrite()
+	return len(cfg.MCPServers) > 0 || cfg.CanExec()
 }
 
 func ToolNames(cfg *config.Config) []string {
@@ -49,15 +50,11 @@ func ToolNames(cfg *config.Config) []string {
 		names = append(names, "write_file", "edit_file", "delete_file", "move_file")
 	}
 	if cfg.CanExec() {
-		names = append(names, "run_command")
-		if cfg.CanWrite() {
-			names = append(names, "run_shell")
-		}
-		names = append(names, "get_job_output", "kill_job", "list_jobs")
+		names = append(names, "run_command", "run_shell", "get_job_output", "kill_job", "list_jobs")
 	}
 	if ProxyEnabled(cfg) {
 		names = append(names, "list_mcp_servers", "list_mcp_tools", "call_mcp_tool")
-		if cfg.CanWrite() {
+		if cfg.CanExec() {
 			names = append(names, "start_mcp_server", "stop_mcp_server")
 		}
 	}
@@ -94,6 +91,13 @@ func addContentTool[In any](s *mcp.Server, d *Deps, t *mcp.Tool, summarize func(
 	mcp.AddTool(s, t, func(ctx context.Context, req *mcp.CallToolRequest, in In) (*mcp.CallToolResult, any, error) {
 		start := time.Now()
 		content, err := h(ctx, req, in)
+		if ask, ok := errors.AsType[*errNeedsApproval](err); ok {
+			// Not audited: the call is audited once the user has answered.
+			return &mcp.CallToolResult{
+				InputRequests: mcp.InputRequestMap{approvalInputID: ask.params},
+				RequestState:  ask.state,
+			}, nil, nil
+		}
 		e := audit.Entry{Tool: t.Name, Args: summarize(in), Duration: time.Since(start), OK: err == nil}
 		if req != nil {
 			if req.Session != nil {

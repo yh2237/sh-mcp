@@ -59,8 +59,12 @@ const backgroundHelp = "If it is still running after wait_sec, the result has a 
 
 func registerExec(s *mcp.Server, d *Deps) {
 	desc := "Run a program directly, without a shell, and return its exit code and output. " + backgroundHelp
-	if !d.Cmd.Unrestricted() {
-		desc += " Only these programs are allowed: " + strings.Join(d.Cmd.Allowed(), ", ") + "."
+	if d.needsApproval() {
+		desc += " Each command waits for the user's approval"
+		if names := d.Cmd.PreApprovedNames(); len(names) > 0 {
+			desc += ", except " + strings.Join(names, ", ")
+		}
+		desc += "."
 	}
 	addTool(s, d, &mcp.Tool{Name: "run_command", Title: "Run command", Description: desc, Annotations: execAnn},
 		func(in runCommandInput) map[string]any {
@@ -76,33 +80,48 @@ func registerExec(s *mcp.Server, d *Deps) {
 				return "", err
 			}
 			display := strings.Join(append([]string{in.Command}, in.Args...), " ")
+			if !d.Cmd.PreApproved(exe) {
+				msg := fmt.Sprintf("Run this command?\ncommand: %s\nprogram: %s\ncwd: %s", display, exe, dir)
+				if in.Stdin != "" {
+					msg += "\nstdin: " + truncate(in.Stdin, 500)
+				}
+				if err := d.approve(req, msg); err != nil {
+					return "", err
+				}
+			}
 			return d.launch(ctx, req, jobs.StartOptions{Argv: append([]string{exe}, in.Args...), Dir: dir, Stdin: in.Stdin, Display: display}, in.WaitSec, in.TimeoutSec)
 		})
 
-	if d.Cfg.CanWrite() {
-		addTool(s, d, &mcp.Tool{
-			Name:  "run_shell",
-			Title: "Run shell script",
-			Description: fmt.Sprintf("Run a script with %s and return its exit code and output. "+
-				"Each call starts a fresh shell: cd and variables do not persist, so pass cwd instead. ", strings.Join(d.Cfg.Shell, " ")) + backgroundHelp,
-			Annotations: execAnn,
-		}, func(in runShellInput) map[string]any {
-			return map[string]any{"script": truncate(in.Script, 200), "cwd": in.Cwd}
-		}, func(ctx context.Context, req *mcp.CallToolRequest, in runShellInput) (string, error) {
-			if strings.TrimSpace(in.Script) == "" {
-				return "", errors.New("script is empty")
-			}
-			dir, err := d.workDir(in.Cwd)
-			if err != nil {
-				return "", err
-			}
-			argv, configure, err := d.shellArgv(in.Script)
-			if err != nil {
-				return "", err
-			}
-			return d.launch(ctx, req, jobs.StartOptions{Argv: argv, Dir: dir, Stdin: in.Stdin, Display: truncate(in.Script, 200), Configure: configure}, in.WaitSec, in.TimeoutSec)
-		})
+	shellDesc := fmt.Sprintf("Run a script with %s and return its exit code and output. "+
+		"Each call starts a fresh shell: cd and variables do not persist, so pass cwd instead. ", strings.Join(d.Cfg.Shell, " ")) + backgroundHelp
+	if d.needsApproval() {
+		shellDesc += " Each script waits for the user's approval."
 	}
+	addTool(s, d, &mcp.Tool{
+		Name:        "run_shell",
+		Title:       "Run shell script",
+		Description: shellDesc,
+		Annotations: execAnn,
+	}, func(in runShellInput) map[string]any {
+		return map[string]any{"script": truncate(in.Script, 200), "cwd": in.Cwd}
+	}, func(ctx context.Context, req *mcp.CallToolRequest, in runShellInput) (string, error) {
+		if strings.TrimSpace(in.Script) == "" {
+			return "", errors.New("script is empty")
+		}
+		dir, err := d.workDir(in.Cwd)
+		if err != nil {
+			return "", err
+		}
+		argv, configure, err := d.shellArgv(in.Script)
+		if err != nil {
+			return "", err
+		}
+		msg := fmt.Sprintf("Run this script with %s?\ncwd: %s\n---\n%s", d.Cfg.Shell[0], dir, in.Script)
+		if err := d.approve(req, msg); err != nil {
+			return "", err
+		}
+		return d.launch(ctx, req, jobs.StartOptions{Argv: argv, Dir: dir, Stdin: in.Stdin, Display: truncate(in.Script, 200), Configure: configure}, in.WaitSec, in.TimeoutSec)
+	})
 
 	addTool(s, d, &mcp.Tool{
 		Name:        "get_job_output",

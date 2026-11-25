@@ -108,7 +108,7 @@ func TestEnvPassthroughPrefix(t *testing.T) {
 	t.Setenv("OTHER_SHMCPTEST", "3")
 	t.Setenv("GOPROXY", "direct")
 	t.Setenv("SH_MCP_AUTH_TOKEN", "secret")
-	p, _ := NewCommandPolicy(true, nil, []string{"SHMCPTEST_*", "SH_MCP_*"}, []string{"SH_MCP_AUTH_TOKEN"})
+	p, _ := NewCommandPolicy(nil, []string{"SHMCPTEST_*", "SH_MCP_*"}, []string{"SH_MCP_AUTH_TOKEN"})
 	got := map[string]bool{}
 	for _, kv := range p.Env() {
 		k, _, _ := strings.Cut(kv, "=")
@@ -171,27 +171,33 @@ func TestCommandPolicy(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, missing := NewCommandPolicy(false, []string{"go", "definitely-not-a-command-xyz"}, nil, nil)
+	p, missing := NewCommandPolicy([]string{"go", "definitely-not-a-command-xyz"}, nil, nil)
 	if len(missing) != 1 {
 		t.Errorf("missing = %v", missing)
 	}
-	if _, err := p.Resolve("go", "."); err != nil {
-		t.Errorf("go should be allowed: %v", err)
+	goPath, err := p.Resolve("go", ".")
+	if err != nil {
+		t.Fatalf("resolve go: %v", err)
 	}
-	if _, err := p.Resolve(exe, "."); !errors.Is(err, ErrCommandNotAllowed) {
-		t.Errorf("unlisted command: err = %v", err)
+	if !p.PreApproved(goPath) {
+		t.Errorf("go should be pre-approved")
 	}
-
-	u, _ := NewCommandPolicy(true, nil, nil, nil)
-	if _, err := u.Resolve("go", "."); err != nil {
-		t.Errorf("unrestricted go: %v", err)
+	exePath, err := p.Resolve(exe, ".")
+	if err != nil {
+		t.Fatalf("resolve %s: %v", exe, err)
+	}
+	if p.PreApproved(exePath) {
+		t.Errorf("unlisted command should not be pre-approved")
+	}
+	if _, err := p.Resolve("definitely-not-a-command-xyz", "."); err == nil {
+		t.Errorf("missing command resolved")
 	}
 }
 
 func TestEnvExcludesSecrets(t *testing.T) {
 	t.Setenv("SH_MCP_AUTH_TOKEN", "secret")
 	t.Setenv("PATH", os.Getenv("PATH"))
-	p, _ := NewCommandPolicy(true, nil, []string{"SH_MCP_AUTH_TOKEN"}, []string{"SH_MCP_AUTH_TOKEN"})
+	p, _ := NewCommandPolicy(nil, []string{"SH_MCP_AUTH_TOKEN"}, []string{"SH_MCP_AUTH_TOKEN"})
 	for _, kv := range p.Env() {
 		if len(kv) > 17 && kv[:18] == "SH_MCP_AUTH_TOKEN=" {
 			t.Fatal("secret leaked into child environment")

@@ -86,7 +86,7 @@ func registerWrite(s *mcp.Server, d *Deps) {
 	}, d.moveFile)
 }
 
-func (d *Deps) writeFile(_ context.Context, _ *mcp.CallToolRequest, in writeFileInput) (string, error) {
+func (d *Deps) writeFile(_ context.Context, req *mcp.CallToolRequest, in writeFileInput) (string, error) {
 	r, err := d.Guard.Resolve(in.Path)
 	if err != nil {
 		return "", err
@@ -97,6 +97,14 @@ func (d *Deps) writeFile(_ context.Context, _ *mcp.CallToolRequest, in writeFile
 	if int64(len(in.Content)) > d.Cfg.MaxFileBytes {
 		return "", fmt.Errorf("content is %d bytes; limit is %d (--max-file-bytes)", len(in.Content), d.Cfg.MaxFileBytes)
 	}
+	verb := "Create"
+	if _, err := r.Root.Lstat(r.Rel); err == nil {
+		verb = "Overwrite"
+	}
+	msg := fmt.Sprintf("%s %s? (%d bytes, %d lines)\n---\n%s", verb, r.Abs, len(in.Content), countLines(in.Content), in.Content)
+	if err := d.approve(req, msg); err != nil {
+		return "", err
+	}
 	if in.CreateDirs {
 		if err := r.Root.MkdirAll(filepath.Dir(r.Rel), 0o755); err != nil {
 			return "", err
@@ -106,14 +114,14 @@ func (d *Deps) writeFile(_ context.Context, _ *mcp.CallToolRequest, in writeFile
 	if err != nil {
 		return "", err
 	}
-	verb := "overwrote"
+	done := "overwrote"
 	if created {
-		verb = "created"
+		done = "created"
 	}
-	return fmt.Sprintf("%s %s (%d bytes, %d lines)", verb, r.Abs, len(in.Content), countLines(in.Content)), nil
+	return fmt.Sprintf("%s %s (%d bytes, %d lines)", done, r.Abs, len(in.Content), countLines(in.Content)), nil
 }
 
-func (d *Deps) editFile(_ context.Context, _ *mcp.CallToolRequest, in editFileInput) (string, error) {
+func (d *Deps) editFile(_ context.Context, req *mcp.CallToolRequest, in editFileInput) (string, error) {
 	if len(in.Edits) == 0 {
 		return "", errors.New("edits is empty")
 	}
@@ -178,13 +186,16 @@ func (d *Deps) editFile(_ context.Context, _ *mcp.CallToolRequest, in editFileIn
 	if int64(len(content)) > d.Cfg.MaxFileBytes {
 		return "", fmt.Errorf("result would be %d bytes; limit is %d (--max-file-bytes)", len(content), d.Cfg.MaxFileBytes)
 	}
+	if err := d.approve(req, fmt.Sprintf("Edit %s? (%d replacement(s))\n%s", r.Abs, total, diff.String())); err != nil {
+		return "", err
+	}
 	if _, err := atomicWrite(r.Root, r.Rel, []byte(content)); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("edited %s: %d replacement(s)\n%s", r.Abs, total, diff.String()), nil
 }
 
-func (d *Deps) deleteFile(_ context.Context, _ *mcp.CallToolRequest, in deleteFileInput) (string, error) {
+func (d *Deps) deleteFile(_ context.Context, req *mcp.CallToolRequest, in deleteFileInput) (string, error) {
 	r, err := d.Guard.Resolve(in.Path)
 	if err != nil {
 		return "", err
@@ -197,12 +208,18 @@ func (d *Deps) deleteFile(_ context.Context, _ *mcp.CallToolRequest, in deleteFi
 		return "", err
 	}
 	if !fi.IsDir() {
+		if err := d.approve(req, "Delete "+r.Abs+"?"); err != nil {
+			return "", err
+		}
 		if err := r.Root.Remove(r.Rel); err != nil {
 			return "", err
 		}
 		return "deleted " + r.Abs, nil
 	}
 	if !in.Recursive {
+		if err := d.approve(req, "Delete the empty directory "+r.Abs+"?"); err != nil {
+			return "", err
+		}
 		if err := r.Root.Remove(r.Rel); err != nil {
 			return "", fmt.Errorf("%s is a directory that is not empty (set recursive to delete its contents): %w", r.Abs, err)
 		}
@@ -227,13 +244,16 @@ func (d *Deps) deleteFile(_ context.Context, _ *mcp.CallToolRequest, in deleteFi
 	if len(denied) > 0 {
 		return "", fmt.Errorf("%s contains files protected by --deny-glob (%s); delete them yourself or leave the directory", r.Abs, strings.Join(denied[:min(len(denied), 5)], ", "))
 	}
+	if err := d.approve(req, fmt.Sprintf("Delete the directory %s and everything in it (%d entries)?", r.Abs, count)); err != nil {
+		return "", err
+	}
 	if err := r.Root.RemoveAll(r.Rel); err != nil {
 		return "", err
 	}
 	return fmt.Sprintf("deleted directory %s (%d entries)", r.Abs, count), nil
 }
 
-func (d *Deps) moveFile(_ context.Context, _ *mcp.CallToolRequest, in moveFileInput) (string, error) {
+func (d *Deps) moveFile(_ context.Context, req *mcp.CallToolRequest, in moveFileInput) (string, error) {
 	src, err := d.Guard.Resolve(in.Source)
 	if err != nil {
 		return "", err
@@ -261,6 +281,9 @@ func (d *Deps) moveFile(_ context.Context, _ *mcp.CallToolRequest, in moveFileIn
 	}
 	if strings.HasPrefix(filepath.ToSlash(dst.Rel)+"/", filepath.ToSlash(src.Rel)+"/") {
 		return "", errors.New("cannot move a directory into itself")
+	}
+	if err := d.approve(req, fmt.Sprintf("Move %s to %s?", src.Abs, dst.Abs)); err != nil {
+		return "", err
 	}
 	if err := src.Root.Rename(src.Rel, dst.Rel); err != nil {
 		return "", err

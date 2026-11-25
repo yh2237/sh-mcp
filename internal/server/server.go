@@ -28,7 +28,8 @@ import (
 const instructions = `sh-mcp gives you access to files (and, depending on its mode, commands) on the machine it runs on, like working in a terminal there.
 Start with get_environment to learn the OS, allowed directories, default directory, mode and installed tools.
 Paths may be absolute or relative to the default directory; only paths inside the allowed directories are accessible.
-Read files before editing them; edit_file needs exact old_text. Commands that run longer than wait_sec keep running as background jobs: follow them with get_job_output.`
+Read files before editing them; edit_file needs exact old_text. Commands that run longer than wait_sec keep running as background jobs: follow them with get_job_output.
+Depending on the mode, changes and commands may wait for the user's approval; if the user declines, do not retry the same action without asking.`
 
 type Server struct {
 	cfg    *config.Config
@@ -39,14 +40,9 @@ type Server struct {
 }
 
 func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) {
-	cmd, missing := security.NewCommandPolicy(cfg.Mode == config.ModeFull, cfg.AllowedCommands, cfg.EnvPassthrough, []string{config.TokenEnv})
-	if cfg.Mode == config.ModeOps {
-		if len(cmd.Allowed()) == 0 {
-			return nil, fmt.Errorf("none of the --allow-command programs were found on PATH: %v", missing)
-		}
-		if len(missing) > 0 {
-			log.Warn("allowed commands not found on PATH; they will be unavailable", "commands", missing)
-		}
+	cmd, missing := security.NewCommandPolicy(cfg.AllowedCommands, cfg.EnvPassthrough, []string{config.TokenEnv})
+	if len(missing) > 0 {
+		log.Warn("--allow-command programs not found on PATH; they will need approval", "commands", missing)
 	}
 	var oa *oauth.Server
 	if cfg.Transport == config.TransportHTTP && cfg.PublicURL != nil && cfg.AuthToken != "" {
@@ -137,8 +133,8 @@ func accessDescription(cfg *config.Config) string {
 	switch cfg.Mode {
 	case config.ModeFull:
 		return "read and change files, run any command"
-	case config.ModeOps:
-		return "read files, run " + strings.Join(cfg.AllowedCommands, ", ")
+	case config.ModeAsk:
+		return "read files; change files and run commands with your approval"
 	}
 	return "read files"
 }

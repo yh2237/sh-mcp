@@ -72,7 +72,7 @@ func TestFlagsOverrideEnv(t *testing.T) {
 func TestListsFromEnv(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	c, err := parse(t, []string{"--deny-glob", "**/secrets/**"}, map[string]string{
-		"SH_MCP_MODE":          "ops",
+		"SH_MCP_MODE":          "ask",
 		"SH_MCP_ALLOW_DIR":     a + ";" + b,
 		"SH_MCP_ALLOW_COMMAND": "df; free ;uptime",
 	})
@@ -151,8 +151,8 @@ func TestInvalid(t *testing.T) {
 		{[]string{"--listen", DefaultListen, "--allow-dir", "."}, nil, "--gen-token"},
 		{nil, map[string]string{"SH_MCP_INSECURE_NO_AUTH": "yes please"}, "SH_MCP_INSECURE_NO_AUTH"},
 		{[]string{"--mode", "admin"}, nil, "--mode"},
-		{[]string{"--mode", "ops"}, nil, "needs at least one --allow-command"},
-		{[]string{"--mode", "full", "--allow-command", "git"}, nil, "only applies to --mode ops"},
+		{[]string{"--mode", "ops"}, nil, "--mode must be"},
+		{[]string{"--mode", "full", "--allow-command", "git"}, nil, "only applies to --mode ask"},
 		{[]string{"--public-url", "http://mcp.example.com"}, nil, "https"},
 		{[]string{"--public-url", "https://mcp.example.com/sub"}, nil, "no path"},
 		{[]string{"--transport", "http"}, nil, "not defined"},

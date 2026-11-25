@@ -50,7 +50,7 @@ func registerMCP(s *mcp.Server, d *Deps) {
 	}, func(mcpListInput) map[string]any { return nil }, func(context.Context, *mcp.CallToolRequest, mcpListInput) (string, error) {
 		infos := d.Proxy.List()
 		if len(infos) == 0 {
-			if d.Cfg.CanWrite() {
+			if d.Cfg.CanExec() {
 				return "(no MCP servers; start one with start_mcp_server)", nil
 			}
 			return "(no MCP servers)", nil
@@ -93,7 +93,7 @@ func registerMCP(s *mcp.Server, d *Deps) {
 		return map[string]any{"server": in.Server, "tool": in.Tool, "argument_names": keys}
 	}, d.mcpCallTool)
 
-	if !d.Cfg.CanWrite() {
+	if !d.Cfg.CanExec() {
 		return
 	}
 	addTool(s, d, &mcp.Tool{
@@ -112,7 +112,10 @@ func registerMCP(s *mcp.Server, d *Deps) {
 		Description: "Stop an MCP server. Servers started with start_mcp_server are forgotten; configured servers start again on next use.",
 		Annotations: execAnn,
 	}, func(in mcpServerInput) map[string]any { return map[string]any{"server": in.Server} },
-		func(_ context.Context, _ *mcp.CallToolRequest, in mcpServerInput) (string, error) {
+		func(_ context.Context, req *mcp.CallToolRequest, in mcpServerInput) (string, error) {
+			if err := d.approve(req, "Stop MCP server "+in.Server+"?"); err != nil {
+				return "", err
+			}
 			if err := d.Proxy.Remove(in.Server); err != nil {
 				return "", err
 			}
@@ -161,10 +164,17 @@ func (d *Deps) mcpListTools(ctx context.Context, _ *mcp.CallToolRequest, in mcpS
 	return b.String(), nil
 }
 
-func (d *Deps) mcpCallTool(ctx context.Context, _ *mcp.CallToolRequest, in mcpCallInput) ([]mcp.Content, error) {
+func (d *Deps) mcpCallTool(ctx context.Context, req *mcp.CallToolRequest, in mcpCallInput) ([]mcp.Content, error) {
 	cs, err := d.Proxy.Session(ctx, in.Server)
 	if err != nil {
 		return nil, err
+	}
+	if d.needsApproval() && !downstreamReadOnly(ctx, cs, in.Tool) {
+		args, _ := json.Marshal(in.Arguments)
+		msg := fmt.Sprintf("Call %s/%s?\narguments: %s", in.Server, in.Tool, args)
+		if err := d.approve(req, msg); err != nil {
+			return nil, err
+		}
 	}
 	ctx, cancel := context.WithTimeout(ctx, mcpCallTimeout)
 	defer cancel()
@@ -188,6 +198,20 @@ func (d *Deps) mcpCallTool(ctx context.Context, _ *mcp.CallToolRequest, in mcpCa
 	return content, nil
 }
 
+// downstreamReadOnly reports whether the downstream server marks tool as
+// read-only, in which case calling it needs no approval.
+func downstreamReadOnly(ctx context.Context, cs *mcp.ClientSession, tool string) bool {
+	for t, err := range cs.Tools(ctx, nil) {
+		if err != nil {
+			return false
+		}
+		if t.Name == tool {
+			return t.Annotations != nil && t.Annotations.ReadOnlyHint
+		}
+	}
+	return false
+}
+
 // relayContent passes the downstream content through, capping text so one
 // call cannot flood the context, and rendering structured-only results.
 func relayContent(res *mcp.CallToolResult) []mcp.Content {
@@ -209,9 +233,13 @@ func relayContent(res *mcp.CallToolResult) []mcp.Content {
 	return out
 }
 
-func (d *Deps) mcpConnect(ctx context.Context, _ *mcp.CallToolRequest, in mcpConnectInput) (string, error) {
+func (d *Deps) mcpConnect(ctx context.Context, req *mcp.CallToolRequest, in mcpConnectInput) (string, error) {
 	dir, err := d.workDir(in.Cwd)
 	if err != nil {
+		return "", err
+	}
+	msg := fmt.Sprintf("Start MCP server %s?\ncommand: %s\ncwd: %s", in.Server, strings.Join(append([]string{in.Command}, in.Args...), " "), dir)
+	if err := d.approve(req, msg); err != nil {
 		return "", err
 	}
 	spec := proxy.Spec{Name: in.Server, Argv: append([]string{in.Command}, in.Args...), Dir: dir, Dynamic: true}

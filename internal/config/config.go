@@ -20,7 +20,7 @@ const (
 	TransportStdio = "stdio"
 
 	ModeRead = "read"
-	ModeOps  = "ops"
+	ModeAsk  = "ask"
 	ModeFull = "full"
 
 	// The token is only accepted from the environment or a file: command-line
@@ -65,8 +65,10 @@ type MCPServer struct {
 	Argv []string
 }
 
-func (c *Config) CanWrite() bool { return c.Mode == ModeFull }
-func (c *Config) CanExec() bool  { return c.Mode == ModeOps || c.Mode == ModeFull }
+// CanWrite and CanExec report whether the tools exist; in ask mode each call
+// additionally needs the user's approval.
+func (c *Config) CanWrite() bool { return c.Mode != ModeRead }
+func (c *Config) CanExec() bool  { return c.Mode != ModeRead }
 
 var defaultDenyGlobs = []string{
 	"**/.env",
@@ -105,9 +107,9 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 	}
 	b := &binder{fs: fs, getenv: getenv}
 
-	b.str(&c.Mode, "mode", `what the agent may do: "read" (read files), "ops" (read files, run --allow-command programs) or "full" (write files, run any command and shell scripts)`)
+	b.str(&c.Mode, "mode", `what the agent may do: "read" (read files), "ask" (also change files and run commands, each approved by the user) or "full" (anything the user running sh-mcp can do)`)
 	b.list(&c.AllowedDirs, "allow-dir", false, "directory the tools may access (repeatable; required for http, default for stdio: working directory)")
-	b.list(&c.AllowedCommands, "allow-command", false, "program run_command may start in --mode ops (repeatable)")
+	b.list(&c.AllowedCommands, "allow-command", false, "program run_command may start without approval in --mode ask (repeatable)")
 	b.list(&c.DenyGlobs, "deny-glob", true, "additional glob of files the file tools must not touch, or with a leading ! files to exempt (repeatable; added to the defaults)")
 	b.int64(&c.MaxFileBytes, "max-file-bytes", "largest file the file tools read, write or search (text and images)")
 	b.fields(&c.Shell, "shell", `shell command line run_shell appends the script to, e.g. "/bin/bash -c" (default: /bin/sh -c, or PowerShell on Windows)`)
@@ -257,16 +259,12 @@ func isLoopbackHost(h string) bool {
 func (c *Config) Finalize() error {
 	var errs []error
 	switch c.Mode {
-	case ModeRead, ModeFull:
-		if len(c.AllowedCommands) > 0 {
-			errs = append(errs, errors.New("--allow-command only applies to --mode ops (in --mode full any command may run)"))
-		}
-	case ModeOps:
-		if len(c.AllowedCommands) == 0 {
-			errs = append(errs, errors.New("--mode ops needs at least one --allow-command"))
-		}
+	case ModeRead, ModeAsk, ModeFull:
 	default:
-		errs = append(errs, fmt.Errorf("--mode must be %q, %q or %q, got %q", ModeRead, ModeOps, ModeFull, c.Mode))
+		errs = append(errs, fmt.Errorf("--mode must be %q, %q or %q, got %q", ModeRead, ModeAsk, ModeFull, c.Mode))
+	}
+	if len(c.AllowedCommands) > 0 && c.Mode != ModeAsk {
+		errs = append(errs, errors.New("--allow-command only applies to --mode ask (it lists programs that run without approval)"))
 	}
 
 	if len(c.AllowedDirs) == 0 {

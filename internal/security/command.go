@@ -2,7 +2,6 @@ package security
 
 import (
 	"errors"
-	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -11,20 +10,18 @@ import (
 	"strings"
 )
 
-var ErrCommandNotAllowed = errors.New("program is not allowed (see --allow-command)")
-
 type CommandPolicy struct {
-	unrestricted bool
-	allowed      map[string]string // normalized name -> absolute path
-	env          []string
+	preApproved map[string]string // normalized name -> absolute path
+	env         []string
 }
 
-// NewCommandPolicy resolves allowed commands to absolute paths once, so later
-// PATH changes or same-named files in a working directory cannot substitute a
-// different binary. Commands that cannot be found are returned in missing.
-func NewCommandPolicy(unrestricted bool, allowed, envPassthrough, secretEnv []string) (p *CommandPolicy, missing []string) {
-	p = &CommandPolicy{unrestricted: unrestricted, allowed: map[string]string{}}
-	for _, name := range allowed {
+// NewCommandPolicy resolves the pre-approved commands (which run without the
+// user's approval in --mode ask) to absolute paths once, so later PATH changes
+// or same-named files in a working directory cannot substitute a different
+// binary. Commands that cannot be found are returned in missing.
+func NewCommandPolicy(preApproved, envPassthrough, secretEnv []string) (p *CommandPolicy, missing []string) {
+	p = &CommandPolicy{preApproved: map[string]string{}}
+	for _, name := range preApproved {
 		path, err := exec.LookPath(name)
 		if err != nil {
 			missing = append(missing, name)
@@ -35,40 +32,41 @@ func NewCommandPolicy(unrestricted bool, allowed, envPassthrough, secretEnv []st
 			missing = append(missing, name)
 			continue
 		}
-		p.allowed[normalizeCommand(name)] = abs
+		p.preApproved[normalizeCommand(name)] = abs
 	}
 	p.env = buildEnv(envPassthrough, secretEnv)
 	return p, missing
 }
 
-func (p *CommandPolicy) Allowed() []string {
-	out := make([]string, 0, len(p.allowed))
-	for k := range p.allowed {
+// PreApprovedNames lists the pre-approved commands that were found.
+func (p *CommandPolicy) PreApprovedNames() []string {
+	out := make([]string, 0, len(p.preApproved))
+	for k := range p.preApproved {
 		out = append(out, k)
 	}
 	sort.Strings(out)
 	return out
 }
 
-func (p *CommandPolicy) Unrestricted() bool { return p.unrestricted }
+// PreApproved reports whether abs, a path returned by Resolve, is one of the
+// pre-approved commands.
+func (p *CommandPolicy) PreApproved(abs string) bool {
+	for _, a := range p.preApproved {
+		if samePath(a, abs) {
+			return true
+		}
+	}
+	return false
+}
 
-// cwd is used for relative paths such as "./build.sh" in unrestricted mode.
+// Resolve finds the program to run. Pre-approved names resolve to the path
+// pinned at startup; cwd is used for relative paths such as "./build.sh".
 func (p *CommandPolicy) Resolve(name, cwd string) (string, error) {
 	if name == "" {
 		return "", errors.New("command is empty")
 	}
-	if !p.unrestricted {
-		if abs, ok := p.allowed[normalizeCommand(name)]; ok {
-			return abs, nil
-		}
-		if filepath.IsAbs(name) {
-			for _, abs := range p.allowed {
-				if samePath(abs, name) {
-					return abs, nil
-				}
-			}
-		}
-		return "", fmt.Errorf("%q: %w %v", name, ErrCommandNotAllowed, p.Allowed())
+	if abs, ok := p.preApproved[normalizeCommand(name)]; ok {
+		return abs, nil
 	}
 	if strings.ContainsAny(name, `/\`) {
 		if !filepath.IsAbs(name) {
@@ -84,7 +82,6 @@ func (p *CommandPolicy) Resolve(name, cwd string) (string, error) {
 	return filepath.Abs(path)
 }
 
-// The shell is only used in --mode full, so the ops allowlist does not apply.
 func (p *CommandPolicy) ResolveShell(name string) (string, error) {
 	path, err := exec.LookPath(name)
 	if err != nil {

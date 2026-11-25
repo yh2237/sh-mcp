@@ -30,6 +30,11 @@ type harness struct {
 
 func newHarness(t *testing.T, mode string, mutate func(*config.Config)) *harness {
 	t.Helper()
+	return newHarnessWith(t, mode, mutate, nil, nil)
+}
+
+func newHarnessWith(t *testing.T, mode string, mutate func(*config.Config), copts *mcp.ClientOptions, sopts *mcp.ClientSessionOptions) *harness {
+	t.Helper()
 	dir, err := filepath.EvalSymlinks(t.TempDir())
 	if err != nil {
 		t.Fatal(err)
@@ -57,13 +62,97 @@ func newHarness(t *testing.T, mode string, mutate func(*config.Config)) *harness
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { ss.Close() })
-	client := mcp.NewClient(&mcp.Implementation{Name: "test"}, nil)
-	cs, err := client.Connect(ctx, ct, nil)
+	client := mcp.NewClient(&mcp.Implementation{Name: "test"}, copts)
+	cs, err := client.Connect(ctx, ct, sopts)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { cs.Close() })
 	return &harness{t: t, dir: dir, sess: cs}
+}
+
+// approver is a client that answers sh-mcp's approval prompts.
+type approver struct {
+	mu       sync.Mutex
+	accept   bool
+	messages []string
+}
+
+func (a *approver) options() *mcp.ClientOptions {
+	return &mcp.ClientOptions{ElicitationHandler: func(_ context.Context, req *mcp.ElicitRequest) (*mcp.ElicitResult, error) {
+		a.mu.Lock()
+		defer a.mu.Unlock()
+		a.messages = append(a.messages, req.Params.Message)
+		if a.accept {
+			return &mcp.ElicitResult{Action: "accept"}, nil
+		}
+		return &mcp.ElicitResult{Action: "decline"}, nil
+	}}
+}
+
+func (a *approver) set(accept bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.accept = accept
+	a.messages = nil
+}
+
+func (a *approver) asked() []string {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return append([]string(nil), a.messages...)
+}
+
+func TestAskModeApproval(t *testing.T) {
+	// The latest protocol answers approvals by multi round-trip requests;
+	// 2025-11-25 (what Gemini speaks) gets an elicitation from the server.
+	for _, version := range []string{"", "2025-11-25"} {
+		t.Run("protocol="+version, func(t *testing.T) {
+			a := &approver{}
+			h := newHarnessWith(t, config.ModeAsk, func(c *config.Config) { c.AllowedCommands = []string{"go"} },
+				a.options(), &mcp.ClientSessionOptions{ProtocolVersion: version})
+
+			a.set(false)
+			h.fail("write_file", map[string]any{"path": "x.txt", "content": "hi"}, "did not approve")
+			if _, err := os.Stat(filepath.Join(h.dir, "x.txt")); err == nil {
+				t.Error("declined write_file created the file")
+			}
+			if asked := a.asked(); len(asked) != 1 || !strings.Contains(asked[0], "x.txt") || !strings.Contains(asked[0], "hi") {
+				t.Errorf("prompt: %q", asked)
+			}
+
+			a.set(true)
+			h.ok("write_file", map[string]any{"path": "x.txt", "content": "hi"})
+			out := h.ok("edit_file", map[string]any{"path": "x.txt", "edits": edits("hi", "hello")})
+			if !strings.Contains(out, "+hello") {
+				t.Errorf("edit: %s", out)
+			}
+			if asked := a.asked(); len(asked) != 2 || !strings.Contains(asked[1], "+hello") {
+				t.Errorf("edit prompt should show the diff: %q", asked)
+			}
+
+			a.set(false)
+			h.ok("read_file", map[string]any{"path": "x.txt"})
+			h.ok("run_command", map[string]any{"command": "go", "args": []string{"version"}})
+			if asked := a.asked(); len(asked) != 0 {
+				t.Errorf("reads and --allow-command programs need no approval: %q", asked)
+			}
+			h.fail("run_shell", map[string]any{"script": "echo hi"}, "did not approve")
+			if asked := a.asked(); len(asked) != 1 || !strings.Contains(asked[0], "echo hi") {
+				t.Errorf("shell prompt: %q", asked)
+			}
+		})
+	}
+}
+
+func TestAskModeWithoutElicitation(t *testing.T) {
+	// Clients that cannot show prompts rely on their own confirmation, which
+	// sh-mcp cannot observe: the call runs.
+	h := newHarness(t, config.ModeAsk, nil)
+	h.ok("write_file", map[string]any{"path": "y.txt", "content": "hi"})
+	if out := h.ok("get_environment", nil); !strings.Contains(out, "client's own confirmation") {
+		t.Errorf("get_environment should explain approvals: %s", out)
+	}
 }
 
 type syncBuffer struct {
@@ -210,7 +299,7 @@ func TestToolsPerMode(t *testing.T) {
 		notWant []string
 	}{
 		{config.ModeRead, nil, []string{"read_file", "search_files", "get_environment"}, []string{"write_file", "run_command", "get_job_output"}},
-		{config.ModeOps, func(c *config.Config) { c.AllowedCommands = []string{"go"} }, []string{"run_command", "get_job_output", "kill_job"}, []string{"write_file", "run_shell", "delete_file"}},
+		{config.ModeAsk, nil, []string{"write_file", "edit_file", "run_command", "run_shell", "kill_job", "start_mcp_server"}, nil},
 		{config.ModeFull, nil, []string{"write_file", "edit_file", "delete_file", "move_file", "run_command", "run_shell", "list_jobs"}, nil},
 	}
 	for _, c := range cases {
@@ -415,10 +504,6 @@ func TestRunCommand(t *testing.T) {
 	if out := h.ok("list_jobs", nil); out != "(no jobs)" {
 		t.Errorf("finished commands should not stay listed: %s", out)
 	}
-
-	ops := newHarness(t, config.ModeOps, func(c *config.Config) { c.AllowedCommands = []string{"go"} })
-	ops.ok("run_command", map[string]any{"command": "go", "args": []string{"version"}})
-	ops.fail("run_command", map[string]any{"command": "git", "args": []string{"--version"}}, "program is not allowed")
 }
 
 func sleepScript(sec int) string {

@@ -5,6 +5,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -80,5 +81,18 @@ func TestRelayContentMergesAdjacentText(t *testing.T) {
 	}
 	if t2, ok := got[2].(*mcp.TextContent); !ok || t2.Text != "third\n\nfourth" {
 		t.Fatalf("item[2] = %#v, want merged third+fourth", got[2])
+	}
+}
+
+func TestIsSubPathCaseSensitivity(t *testing.T) {
+	if !isSubPath("dir/sub", "dir") {
+		t.Error("expected dir/sub to be subpath of dir")
+	}
+	if isSubPath("dir2/sub", "dir") {
+		t.Error("dir2/sub must not be subpath of dir")
+	}
+	wantCaseInsensitive := runtime.GOOS == "windows" || runtime.GOOS == "darwin"
+	if got := isSubPath("dir/sub", "Dir"); got != wantCaseInsensitive {
+		t.Errorf("isSubPath(dir/sub, Dir) = %v, want %v on %s", got, wantCaseInsensitive, runtime.GOOS)
 	}
 }

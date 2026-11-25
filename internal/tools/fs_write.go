@@ -11,6 +11,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -280,7 +281,7 @@ func (d *Deps) moveFile(_ context.Context, req *mcp.CallToolRequest, in moveFile
 			return "", fmt.Errorf("%s is an existing directory and cannot be overwritten", dst.Abs)
 		}
 	}
-	if strings.HasPrefix(filepath.ToSlash(dst.Rel)+"/", filepath.ToSlash(src.Rel)+"/") {
+	if isSubPath(dst.Rel, src.Rel) {
 		return "", errors.New("cannot move a directory into itself")
 	}
 	if err := d.approve(req, fmt.Sprintf("Move %s to %s?", src.Abs, dst.Abs)); err != nil {
@@ -373,6 +374,15 @@ func atomicWrite(root *os.Root, rel string, data []byte) (created bool, err erro
 		return false, err
 	}
 	return created, nil
+}
+
+func isSubPath(dstRel, srcRel string) bool {
+	dst := filepath.ToSlash(dstRel) + "/"
+	src := filepath.ToSlash(srcRel) + "/"
+	if runtime.GOOS == "windows" || runtime.GOOS == "darwin" {
+		return strings.HasPrefix(strings.ToLower(dst), strings.ToLower(src))
+	}
+	return strings.HasPrefix(dst, src)
 }
 
 func isCRLF(s string) bool {

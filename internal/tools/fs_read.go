@@ -91,17 +91,21 @@ func readLimit(r io.Reader, abs string, limit int64) ([]byte, error) {
 	return data, nil
 }
 
-func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFileInput) ([]mcp.Content, error) {
+func (d *Deps) readFile(ctx context.Context, req *mcp.CallToolRequest, in readFileInput) ([]mcp.Content, error) {
 	switch {
-	case len(in.Paths) == 0:
-		if in.Path == "" {
-			return nil, errors.New("path or paths is required")
-		}
-		return d.readOne(ctx, in.Path, in.StartLine, in.EndLine, maxReadOutput, maxFileBytes)
-	case in.Path != "":
+	case len(in.Paths) == 0 && in.Path == "":
+		return nil, errors.New("path or paths is required")
+	case len(in.Paths) > 0 && in.Path != "":
 		return nil, errors.New("give either path or paths, not both")
 	case len(in.Paths) > maxReadPaths:
 		return nil, fmt.Errorf("at most %d paths can be read at once", maxReadPaths)
+	}
+	outside, err := d.approveOutside(req, append([]string{in.Path}, in.Paths...)...)
+	if err != nil {
+		return nil, err
+	}
+	if len(in.Paths) == 0 {
+		return d.readOne(ctx, in.Path, outside, in.StartLine, in.EndLine, maxReadOutput, maxFileBytes)
 	}
 	// The files share one output budget, so many large files cannot flood the
 	// context: each gets a fair share of what is left (never more than a
@@ -132,7 +136,7 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 			break
 		}
 		share := min(max(budget/(len(in.Paths)-i), 4<<10), maxReadOutput, budget)
-		content, err := d.readOne(ctx, p, in.StartLine, in.EndLine, share, min(maxFileBytes, int64(budget)))
+		content, err := d.readOne(ctx, p, outside, in.StartLine, in.EndLine, share, min(maxFileBytes, int64(budget)))
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -164,11 +168,12 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 
 // readOne reads one file, returning at most maxOut bytes of text or an image
 // of at most maxImage bytes.
-func (d *Deps) readOne(ctx context.Context, p string, startLine, endLine, maxOut int, maxImage int64) ([]mcp.Content, error) {
-	r, err := d.Guard.Resolve(p)
+func (d *Deps) readOne(ctx context.Context, p string, outside bool, startLine, endLine, maxOut int, maxImage int64) ([]mcp.Content, error) {
+	r, err := d.resolveRead(p, outside)
 	if err != nil {
 		return nil, err
 	}
+	defer r.Release()
 	info, err := r.Root.Stat(r.Rel)
 	if err != nil {
 		return nil, err
@@ -312,15 +317,20 @@ func readLine(br *bufio.Reader, limit int) ([]byte, error) {
 	}
 }
 
-func (d *Deps) listDir(_ context.Context, _ *mcp.CallToolRequest, in listDirInput) (string, error) {
+func (d *Deps) listDir(_ context.Context, req *mcp.CallToolRequest, in listDirInput) (string, error) {
 	p := in.Path
 	if p == "" {
 		p = "."
 	}
-	r, err := d.Guard.Resolve(p)
+	outside, err := d.approveOutside(req, p)
 	if err != nil {
 		return "", err
 	}
+	r, err := d.resolveRead(p, outside)
+	if err != nil {
+		return "", err
+	}
+	defer r.Release()
 	info, err := r.Root.Stat(r.Rel)
 	if err != nil {
 		return "", err

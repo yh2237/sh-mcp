@@ -156,6 +156,61 @@ func TestAskModeWithoutElicitation(t *testing.T) {
 	}
 }
 
+func TestAskModeReadsOutsideWithApproval(t *testing.T) {
+	outside, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for name, content := range map[string]string{"notes.md": "outside note\n", ".env": "SECRET=1\n"} {
+		if err := os.WriteFile(filepath.Join(outside, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	note := filepath.Join(outside, "notes.md")
+
+	a := &approver{}
+	h := newHarnessWith(t, config.ModeAsk, nil, a.options(), nil)
+	h.writeRaw("in.txt", "inside\n")
+
+	a.set(false)
+	h.fail("read_file", map[string]any{"path": note}, "did not approve")
+	if asked := a.asked(); len(asked) != 1 || !strings.Contains(asked[0], note) {
+		t.Errorf("prompt: %q", asked)
+	}
+
+	a.set(true)
+	if out := h.ok("read_file", map[string]any{"path": note}); !strings.Contains(out, "outside note") {
+		t.Errorf("approved outside read: %s", out)
+	}
+	// One prompt covers every outside path of a call; inside paths need none.
+	out := h.ok("read_file", map[string]any{"paths": []string{"in.txt", note, filepath.Join(outside, "missing.md")}})
+	if !strings.Contains(out, "inside") || !strings.Contains(out, "outside note") {
+		t.Errorf("mixed read: %s", out)
+	}
+	if asked := a.asked(); len(asked) != 2 {
+		t.Errorf("want one prompt per call, got %q", asked)
+	}
+	if out := h.ok("list_dir", map[string]any{"path": outside}); !strings.Contains(out, "notes.md") || strings.Contains(out, ".env") {
+		t.Errorf("outside list_dir should hide protected files: %s", out)
+	}
+	if out := h.ok("search_files", map[string]any{"path": outside, "pattern": "SECRET|outside"}); !strings.Contains(out, "outside note") || strings.Contains(out, "SECRET") {
+		t.Errorf("outside search: %s", out)
+	}
+	// --deny-glob still applies, approval or not.
+	a.set(true)
+	h.fail("read_file", map[string]any{"path": filepath.Join(outside, ".env")}, "deny-glob")
+	if asked := a.asked(); len(asked) != 0 {
+		t.Errorf("protected file should be refused without asking: %q", asked)
+	}
+	h.fail("write_file", map[string]any{"path": filepath.Join(outside, "x.txt"), "content": "x"}, "outside the allowed directories")
+
+	// read mode and clients without approval prompts keep the boundary.
+	r := newHarness(t, config.ModeRead, nil)
+	r.fail("read_file", map[string]any{"path": note}, "outside the allowed directories")
+	n := newHarness(t, config.ModeAsk, nil)
+	n.fail("read_file", map[string]any{"path": note}, "cannot show sh-mcp's approval prompt")
+}
+
 type syncBuffer struct {
 	mu sync.Mutex
 	b  bytes.Buffer

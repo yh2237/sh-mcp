@@ -36,6 +36,15 @@ type Resolved struct {
 	RootDir string   // the --allow-dir entry that contains Abs
 	Root    *os.Root // operations must use Root with Rel
 	Rel     string   // path relative to RootDir; "." for the root itself
+	close   func()
+}
+
+// Release closes the root opened by ResolveOutside; it does nothing for paths
+// inside the allowed directories.
+func (r *Resolved) Release() {
+	if r != nil && r.close != nil {
+		r.close()
+	}
 }
 
 // NewGuard confines access to dirs. A deny glob starting with "!" exempts
@@ -82,22 +91,30 @@ func (g *Guard) Dirs() []string {
 	return out
 }
 
-func (g *Guard) Resolve(p string) (*Resolved, error) {
+// Abs returns the cleaned absolute form of p (relative paths are relative to
+// the default directory).
+func (g *Guard) Abs(p string) (string, error) {
 	if strings.TrimSpace(p) == "" {
-		return nil, errors.New("path is empty")
+		return "", errors.New("path is empty")
 	}
 	if err := checkPlatformPath(p); err != nil {
-		return nil, err
+		return "", err
 	}
 	abs := p
 	if !filepath.IsAbs(abs) {
 		if filepath.VolumeName(abs) != "" {
-			return nil, fmt.Errorf("%s: drive-relative paths are not supported", p)
+			return "", fmt.Errorf("%s: drive-relative paths are not supported", p)
 		}
 		abs = filepath.Join(g.def, abs)
 	}
-	abs = filepath.Clean(abs)
+	return filepath.Clean(abs), nil
+}
 
+func (g *Guard) Resolve(p string) (*Resolved, error) {
+	abs, err := g.Abs(p)
+	if err != nil {
+		return nil, err
+	}
 	for _, r := range g.roots {
 		rel, err := filepath.Rel(r.dir, abs)
 		if err != nil || !(rel == "." || filepath.IsLocal(rel)) {
@@ -109,6 +126,37 @@ func (g *Guard) Resolve(p string) (*Resolved, error) {
 		return &Resolved{Abs: abs, RootDir: r.dir, Root: r.root, Rel: rel}, nil
 	}
 	return nil, fmt.Errorf("%s: %w %v", abs, ErrOutsideRoots, g.Dirs())
+}
+
+// ResolveOutside is Resolve for a path the user allowed reading although it
+// is outside the allowed directories. It opens a root at the directory (or
+// at a file's parent), so symlinks cannot lead out of what was approved, and
+// the deny globs still apply. Call Release when done.
+func (g *Guard) ResolveOutside(p string) (*Resolved, error) {
+	r, err := g.Resolve(p)
+	if !errors.Is(err, ErrOutsideRoots) {
+		return r, err
+	}
+	abs, err := g.Abs(p)
+	if err != nil {
+		return nil, err
+	}
+	if g.isDenied(abs) {
+		return nil, fmt.Errorf("%s: %w", abs, ErrDenied)
+	}
+	info, err := os.Stat(abs)
+	if err != nil {
+		return nil, err
+	}
+	dir, rel := abs, "."
+	if !info.IsDir() {
+		dir, rel = filepath.Dir(abs), filepath.Base(abs)
+	}
+	root, err := os.OpenRoot(dir)
+	if err != nil {
+		return nil, err
+	}
+	return &Resolved{Abs: abs, RootDir: dir, Root: root, Rel: rel, close: func() { root.Close() }}, nil
 }
 
 func (g *Guard) IsDenied(abs string) bool { return g.isDenied(abs) }

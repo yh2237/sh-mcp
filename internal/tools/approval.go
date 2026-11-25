@@ -16,6 +16,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"github.com/yh2237/sh-mcp/internal/config"
+	"github.com/yh2237/sh-mcp/internal/security"
 )
 
 const approvalInputID = "approval"
@@ -121,6 +122,54 @@ func (d *Deps) approve(req *mcp.CallToolRequest, message string) error {
 		Message:         approvalMessage(message),
 		RequestedSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 	}}
+}
+
+// approveOutside lets the read tools in ask mode read paths outside the
+// allowed directories, asking once for all of them. It reports whether the
+// call may resolve its paths with Guard.ResolveOutside. Read tools are marked
+// read-only, so no client confirms them on its own: a client that cannot show
+// sh-mcp's prompt gets an error instead.
+func (d *Deps) approveOutside(req *mcp.CallToolRequest, paths ...string) (bool, error) {
+	if !d.needsApproval() {
+		return false, nil
+	}
+	var outside []string
+	for _, p := range paths {
+		if p == "" {
+			continue
+		}
+		if _, err := d.Guard.Resolve(p); !errors.Is(err, security.ErrOutsideRoots) {
+			continue
+		}
+		abs, err := d.Guard.Abs(p)
+		if err != nil {
+			continue
+		}
+		if d.Guard.IsDenied(abs) {
+			// Refused either way; say why without asking first.
+			return false, fmt.Errorf("%s: %w", abs, security.ErrDenied)
+		}
+		outside = append(outside, abs)
+	}
+	if len(outside) == 0 {
+		return false, nil
+	}
+	if !approvalBySession(req) {
+		return false, fmt.Errorf("%s is outside the allowed directories (--allow-dir); ask mode can read it after the user's approval, but this client cannot show sh-mcp's approval prompt", outside[0])
+	}
+	if err := d.approve(req, "Read outside the allowed directories:\n  "+strings.Join(outside, "\n  ")); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// resolveRead resolves a path for a read tool; outside comes from
+// approveOutside.
+func (d *Deps) resolveRead(p string, outside bool) (*security.Resolved, error) {
+	if outside {
+		return d.Guard.ResolveOutside(p)
+	}
+	return d.Guard.Resolve(p)
 }
 
 // approvalMessage shortens a long message for the prompt and says so, so a

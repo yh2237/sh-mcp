@@ -44,15 +44,20 @@ func registerSearch(s *mcp.Server, d *Deps) {
 	}, d.search)
 }
 
-func (d *Deps) search(ctx context.Context, _ *mcp.CallToolRequest, in searchInput) (string, error) {
+func (d *Deps) search(ctx context.Context, req *mcp.CallToolRequest, in searchInput) (string, error) {
 	p := in.Path
 	if p == "" {
 		p = "."
 	}
-	r, err := d.Guard.Resolve(p)
+	outside, err := d.approveOutside(req, p)
 	if err != nil {
 		return "", err
 	}
+	r, err := d.resolveRead(p, outside)
+	if err != nil {
+		return "", err
+	}
+	defer r.Release()
 	var re *regexp.Regexp
 	if in.Pattern != "" {
 		expr := in.Pattern

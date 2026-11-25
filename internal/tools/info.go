@@ -43,6 +43,7 @@ func registerInfo(s *mcp.Server, d *Deps) {
 			b.WriteString("  read files only; no file changes, no commands\n")
 		case config.ModeAsk:
 			b.WriteString("  change files and run commands, each after the user's approval\n")
+			b.WriteString("  read_file, list_dir and search_files can read outside allowed_dirs after the user's approval\n")
 			if names := d.Cmd.PreApprovedNames(); len(names) > 0 {
 				fmt.Fprintf(&b, "  run without approval: %s\n", strings.Join(names, ", "))
 			}

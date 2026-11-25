@@ -58,6 +58,7 @@ type server struct {
 	exited   chan struct{}
 	lastUsed time.Time
 	lastErr  string
+	retired  bool // removed, replaced or shut down: never start again
 }
 
 // NewManager returns a manager whose servers run with env; resolve maps a
@@ -84,7 +85,7 @@ func (m *Manager) Add(spec Spec) error {
 		if !old.spec.Dynamic || !spec.Dynamic {
 			return fmt.Errorf("server %q already exists", spec.Name)
 		}
-		go old.shutdown()
+		go old.retire()
 	} else if len(m.servers) >= MaxServers {
 		return fmt.Errorf("at most %d MCP servers can be registered", MaxServers)
 	}
@@ -103,7 +104,11 @@ func (m *Manager) Remove(name string) error {
 	if !ok {
 		return fmt.Errorf("no MCP server %q (see list_mcp_servers)", name)
 	}
-	s.shutdown()
+	if s.spec.Dynamic {
+		s.retire()
+	} else {
+		s.shutdown() // starts again on next use
+	}
 	return nil
 }
 
@@ -162,6 +167,11 @@ func (m *Manager) Session(ctx context.Context, name string) (*mcp.ClientSession,
 func (s *server) connect(ctx context.Context, m *Manager) (*mcp.ClientSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.retired {
+		// Removed or replaced while this call was on its way: starting it
+		// now would leave a process nobody manages.
+		return nil, fmt.Errorf("MCP server %q was stopped", s.spec.Name)
+	}
 	s.lastUsed = time.Now()
 	if s.session != nil {
 		select {
@@ -227,6 +237,14 @@ func (s *server) shutdown() {
 	s.cleanupLocked()
 }
 
+// retire stops the server for good; later connects fail.
+func (s *server) retire() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.retired = true
+	s.cleanupLocked()
+}
+
 // cleanupLocked closes the session (closing the server's stdin asks it to
 // exit) and then kills whatever is left of its process tree.
 func (s *server) cleanupLocked() {
@@ -286,7 +304,7 @@ func (m *Manager) Shutdown() {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			s.shutdown()
+			s.retire()
 		}()
 	}
 	wg.Wait()

@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>sh-mcp: authorize {{.Client}}</title>
+<style>
+  :root { color-scheme: light dark; font-family: system-ui, sans-serif; }
+  body { max-width: 32rem; margin: 3rem auto; padding: 0 1rem; }
+  input { width: 100%; box-sizing: border-box; padding: .5rem; font-size: 1rem; }
+  button { padding: .5rem 1rem; font-size: 1rem; }
+</style>
+</head>
+<body>
+{{if .Error}}<p><strong>{{.Error}}</strong></p>{{end}}
+{{if .Request}}
+<h1>Allow “{{.Client}}” to use sh-mcp?</h1>
+<p>It will be sent back to <code>{{.RedirectHost}}</code>.</p>
+<p>The client gets the same access as this server allows ({{.Access}}) on <code>{{.Issuer}}</code>.
+<strong>Only approve a connection you started yourself.</strong></p>
+<form method="post" autocomplete="off">
+  <input type="hidden" name="request" value="{{.Request}}">
+  <p>
+    <label for="password">Server auth token (<code>SH_MCP_AUTH_TOKEN</code>)</label>
+    <input type="password" id="password" name="password" autofocus>
+  </p>
+  <button type="submit" name="action" value="approve">Approve</button>
+  <button type="submit" name="action" value="deny">Deny</button>
+</form>
+{{end}}
+</body>
+</html>

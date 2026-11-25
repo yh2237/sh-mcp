@@ -15,7 +15,7 @@
 | `--mode` | `SH_MCP_MODE` | `read` | `read` / `ops` / `full` |
 | `--allow-dir` | `SH_MCP_ALLOW_DIR` | `stdio`: カレント / `http`: 必須 | 許可ルートディレクトリ（複数可）。先頭が相対パスの基準（`default_dir`） |
 | `--allow-command` | `SH_MCP_ALLOW_COMMAND` | なし | `ops` モードで許可するプログラム名（複数可、`ops` で必須、`read`/`full` で指定不可）。引数次第で任意コードを実行できるものは指定しない（[セキュリティ](security.md)参照） |
-| `--deny-glob` | `SH_MCP_DENY_GLOB` | 後述の 6 件 | 保護対象の glob パターン（複数可・既定へ追記） |
+| `--deny-glob` | `SH_MCP_DENY_GLOB` | 後述 | 保護対象の glob パターン（複数可・既定へ追記）。先頭に `!` を付けると保護の対象外にする例外 |
 | `--max-file-bytes` | `SH_MCP_MAX_FILE_BYTES` | `5242880`（5 MiB） | 読み書き・検索・画像返却のファイルサイズ上限 |
 | `--shell` | `SH_MCP_SHELL` | Unix: `/bin/sh -c` / Win: PowerShell | `run_shell` が使うシェルコマンド列（末尾にスクリプトを付与） |
 | `--env-passthrough` | `SH_MCP_ENV_PASSTHROUGH` | なし | コマンド・MCP サーバーへ追加で渡す環境変数名（複数可）。末尾 `*` で前方一致（例: `AWS_*`） |
@@ -39,6 +39,8 @@ HTTP モードでは `--insecure-no-auth` がない限り 16 文字以上のト�
 ## デフォルトの `--deny-glob`
 
 `**/.env`, `**/.env.*`, `**/*.pem`, `**/*.key`, `**/*id_rsa*`, `**/*id_ed25519*`（シンボリックリンクの実体パスにも適用）。
+
+例外として `!**/.env.example`, `!**/.env.sample`, `!**/.env.template` が入っており、これらのテンプレートは読み書きできます。既定の保護を外したい場合も同じく `!` で例外を追加します（例: `--deny-glob '!**/testdata/**/*.pem'`）。
 
 ## ローカル MCP サーバー中継（`--mcp-server`）
 

@@ -88,6 +88,20 @@ func TestGuardResolve(t *testing.T) {
 	}
 }
 
+func TestGuardDenyExceptions(t *testing.T) {
+	root := t.TempDir()
+	g, err := NewGuard([]string{root}, []string{"**/.env", "**/.env.*", "!**/.env.example"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+	for name, want := range map[string]bool{".env": true, ".env.local": true, ".env.example": false, "sub/.env.example": false} {
+		if got := g.IsDenied(filepath.Join(root, name)); got != want {
+			t.Errorf("IsDenied(%s) = %v, want %v", name, got, want)
+		}
+	}
+}
+
 func TestEnvPassthroughPrefix(t *testing.T) {
 	t.Setenv("SHMCPTEST_A", "1")
 	t.Setenv("SHMCPTEST_B", "2")

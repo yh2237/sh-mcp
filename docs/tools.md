@@ -4,21 +4,22 @@
 
 ## モード別のツール
 
-| ツール | `read` | `ops` | `full` | 概要 |
+○ は使える、△ は使えるが毎回ユーザーの承認が要る、を表します（[承認の仕組み](security.md#2-モードと承認)）。
+
+| ツール | `read` | `ask` | `full` | 概要 |
 | :--- | :---: | :---: | :---: | :--- |
-| `get_environment` | ○ | ○ | ○ | OS・許可ディレクトリ・モード・使えるツールの一覧 |
+| `get_environment` | ○ | ○ | ○ | OS・許可ディレクトリ・モード・承認の方法・使えるツールの一覧 |
 | `read_file` | ○ | ○ | ○ | 行番号付きで読む（画像も可） |
 | `list_dir` | ○ | ○ | ○ | ディレクトリの一覧 |
 | `search_files` | ○ | ○ | ○ | 正規表現で検索、glob でファイル一覧 |
-| `write_file` | — | — | ○ | 新規作成・全文上書き |
-| `edit_file` | — | — | ○ | 文字列を置換して diff を返す |
-| `delete_file` | — | — | ○ | ファイル・ディレクトリの削除 |
-| `move_file` | — | — | ○ | 移動・名前変更 |
-| `run_command` | — | ○（許可分のみ） | ○ | シェルを介さずコマンド実行 |
-| `run_shell` | — | — | ○ | シェルスクリプト実行 |
+| `write_file` / `edit_file` | — | △ | ○ | 新規作成・全文上書き / 文字列を置換して diff を返す |
+| `delete_file` / `move_file` | — | △ | ○ | 削除 / 移動・名前変更 |
+| `run_command` | — | △（`--allow-command` は ○） | ○ | シェルを介さずコマンド実行 |
+| `run_shell` | — | △ | ○ | シェルスクリプト実行 |
 | `get_job_output` / `kill_job` / `list_jobs` | — | ○ | ○ | バックグラウンドジョブの操作 |
-| `list_mcp_servers` / `list_mcp_tools` / `call_mcp_tool` | ※ | ※ | ○ | 中継先 MCP サーバーの利用（※ `--mcp-server` 指定時） |
-| `start_mcp_server` / `stop_mcp_server` | — | — | ○ | 中継先 MCP サーバーの起動・停止 |
+| `list_mcp_servers` / `list_mcp_tools` | ※ | ○ | ○ | 中継先 MCP サーバーの一覧（※ `--mcp-server` 指定時） |
+| `call_mcp_tool` | ※ | △（読み取り専用のツールは ○） | ○ | 中継先 MCP サーバーのツール呼び出し |
+| `start_mcp_server` / `stop_mcp_server` | — | △ | ○ | 中継先 MCP サーバーの起動・停止 |
 
 ## ファイルの読み取り・検索
 
@@ -56,7 +57,7 @@
 
 `pattern` を省くと `glob` に一致するファイル名の一覧を返します。`.git` とバイナリファイルは対象外です。
 
-## ファイルの編集（`full` のみ）
+## ファイルの編集（`ask` / `full`）
 
 ### `write_file`
 
@@ -82,7 +83,7 @@
 * `delete_file`: `path`、`recursive`（中身ごと削除）。保護されたファイルを含むディレクトリは削除できません。
 * `move_file`: `source`、`destination`、`overwrite`（既存ファイルを上書き）。同じ `--allow-dir` の中でのみ移動できます。
 
-## コマンド実行（`ops` / `full`）
+## コマンド実行（`ask` / `full`）
 
 `wait_sec` 秒以内に終わらないコマンドはバックグラウンドで続行し、`job_id` を返します。同時に実行できるのは 16 件までで、1 回に返す出力は 64 KiB までです。
 
@@ -108,4 +109,4 @@
 * `list_mcp_servers`: 中継先サーバーの一覧と状態
 * `list_mcp_tools`: `server` のツール一覧（未起動なら起動）
 * `call_mcp_tool`: `server`、`tool`、`arguments`。120 秒でタイムアウトします。
-* `start_mcp_server` / `stop_mcp_server`（`full` のみ）: `server`、`command`、`args`、`cwd` で起動し、`server` を指定して停止します。
+* `start_mcp_server` / `stop_mcp_server`（`read` 以外）: `server`、`command`、`args`、`cwd` で起動し、`server` を指定して停止します。

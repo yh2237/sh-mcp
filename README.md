@@ -56,11 +56,9 @@ sh-mcp --mode full --allow-dir ~/projects
 ```bash
 export SH_MCP_AUTH_TOKEN="$(sh-mcp --gen-token)"
 sh-mcp \
-  --mode ops \
+  --mode ask \
   --allow-dir /home/user/projects \
   --allow-command df \
-  --allow-command free \
-  --allow-command journalctl \
   --public-url https://mcp.yourdomain.example
 ```
 
@@ -68,13 +66,13 @@ sh-mcp \
 
 ## 動作モード
 
-| モード | ファイル読み取り・検索 | ファイル変更 | コマンド実行 | `run_shell` | MCP 中継 |
-| :--- | :---: | :---: | :--- | :---: | :--- |
-| `read`（既定） | 可 | 不可 | 不可 | 不可 | `--mcp-server` 指定分のみ |
-| `ops` | 可 | 不可 | `--allow-command` のみ | 不可 | `--mcp-server` 指定分のみ |
-| `full` | 可 | 可 | 任意コマンド | 可 | 指定分＋動的起動/停止 |
+| モード | ファイル読み取り | ファイル変更 | コマンド実行 |
+| :--- | :---: | :--- | :--- |
+| `read`（既定） | 可 | 不可 | 不可 |
+| `ask` | 可 | 毎回承認 | 毎回承認（`--allow-command` のプログラムは承認なし） |
+| `full` | 可 | 自由 | 自由 |
 
-`ops` の制限は sh-mcp のツールに対するもので、許可したコマンド自身の動作は防げません。（[詳細](docs/security.md)）
+承認は、クライアントが対応していれば sh-mcp が確認を出し、対応していなければクライアント自身の確認画面に任せます（Gemini アプリでは操作ごとに許可カードが出ます）。詳しくは[セキュリティ](docs/security.md)を見てください。
 
 ## ドキュメント
 

@@ -1,6 +1,6 @@
 # 設定リファレンス
 
-設定は CLI フラグか環境変数で行います（フラグ ＞ 環境変数 ＞ 既定値）。フラグ `--x-y` は環境変数 `SH_MCP_X_Y` に対応し、複数指定できる項目は環境変数では `;` で区切ります（例: `SH_MCP_ALLOW_COMMAND=df;free;journalctl`）。`--deny-glob` だけは既定値に追記されます。
+設定は CLI フラグか環境変数で行います（フラグ ＞ 環境変数 ＞ 既定値）。フラグ `--x-y` は環境変数 `SH_MCP_X_Y` に対応し、複数指定できる項目は環境変数では `;` で区切ります（例: `SH_MCP_ALLOW_DIR=/srv/a;/srv/b`）。`--deny-glob` だけは既定値に追記されます。
 
 ## フラグ・環境変数一覧
 
@@ -8,9 +8,9 @@
 
 | フラグ | 環境変数 | 既定値 | 説明 |
 | :--- | :--- | :--- | :--- |
-| `--mode` | `SH_MCP_MODE` | `read` | `read` / `ops` / `full` |
+| `--mode` | `SH_MCP_MODE` | `read` | `read` / `ask` / `full`（[セキュリティ](security.md#2-モードと承認)） |
 | `--allow-dir` | `SH_MCP_ALLOW_DIR` | `stdio`: カレント / `http`: 必須 | アクセスを許可するディレクトリ（複数可）。先頭が相対パスの基準 |
-| `--allow-command` | `SH_MCP_ALLOW_COMMAND` | なし | `ops` で実行を許可するプログラム（複数可、`ops` でのみ指定） |
+| `--allow-command` | `SH_MCP_ALLOW_COMMAND` | なし | `ask` で承認なしに実行できるプログラム（複数可、`ask` でのみ指定） |
 | `--deny-glob` | `SH_MCP_DENY_GLOB` | 後述 | ファイル操作ツールから保護する glob（複数可）。先頭 `!` で例外 |
 | `--max-file-bytes` | `SH_MCP_MAX_FILE_BYTES` | 5 MiB | 読み書き・検索するファイルのサイズ上限 |
 | `--shell` | `SH_MCP_SHELL` | Unix: `/bin/sh -c` / Windows: PowerShell | `run_shell` が使うシェル |
@@ -40,9 +40,8 @@ HTTP では 16 文字以上のトークンが必須です。`ps` で見えない
 
 ```bash
 sh-mcp \
-  --mode ops \
+  --mode ask \
   --allow-dir /home/user/projects \
-  --allow-command df \
   --mcp-server "github=github-mcp-server stdio" \
   --env-passthrough GITHUB_PERSONAL_ACCESS_TOKEN \
   --public-url https://mcp.yourdomain.example

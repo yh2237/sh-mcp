@@ -14,7 +14,7 @@
   * 例: `git`（`-c core.pager=…`、`-c alias.x='!cmd'`、`--upload-pack` 等で任意コマンドを実行でき、`checkout` や `config` でファイルも変更可能）、`docker`（実質 root 権限）、シェル・各種インタプリタ（`python`, `node` 等）、`find`（`-exec`）、`xargs`、`env`、`make`、`go`、`npm`
   * 向いているのは `df`, `free`, `uptime`, `journalctl` のような参照系のプログラムです。
 * `run_command` は `exec.CommandContext` で直接実行します。シェルを介する `run_shell` は `full` モードのみ有効です。
-* 子プロセスには基本リスト＋`--env-passthrough` のみ渡し、`SH_MCP_AUTH_TOKEN` は必ず除外します。
+* 子プロセスには基本リスト（ツールチェーンの場所・プロキシ等。プロキシ URL に認証情報を埋め込んでいる場合を除き秘密情報は含まない）＋`--env-passthrough` のみ渡し、`SH_MCP_AUTH_TOKEN` は前方一致の指定でも必ず除外します。
 * タイムアウト・キャンセル・`kill_job`・終了時はプロセスツリーごと終了します（Unix: プロセスグループ、Windows: Job Object）。
 
 ## 3. HTTP 保護

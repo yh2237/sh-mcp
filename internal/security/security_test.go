@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -83,6 +84,25 @@ func TestGuardResolve(t *testing.T) {
 			if _, err := g.Resolve(p); err == nil {
 				t.Errorf("Resolve(%q) succeeded, want error", p)
 			}
+		}
+	}
+}
+
+func TestEnvPassthroughPrefix(t *testing.T) {
+	t.Setenv("SHMCPTEST_A", "1")
+	t.Setenv("SHMCPTEST_B", "2")
+	t.Setenv("OTHER_SHMCPTEST", "3")
+	t.Setenv("GOPROXY", "direct")
+	t.Setenv("SH_MCP_AUTH_TOKEN", "secret")
+	p, _ := NewCommandPolicy(true, nil, []string{"SHMCPTEST_*", "SH_MCP_*"}, []string{"SH_MCP_AUTH_TOKEN"})
+	got := map[string]bool{}
+	for _, kv := range p.Env() {
+		k, _, _ := strings.Cut(kv, "=")
+		got[strings.ToUpper(k)] = true
+	}
+	for k, want := range map[string]bool{"SHMCPTEST_A": true, "SHMCPTEST_B": true, "GOPROXY": true, "OTHER_SHMCPTEST": false, "SH_MCP_AUTH_TOKEN": false} {
+		if got[k] != want {
+			t.Errorf("%s passed = %v, want %v", k, got[k], want)
 		}
 	}
 }

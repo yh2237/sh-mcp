@@ -18,7 +18,7 @@
 | `--deny-glob` | `SH_MCP_DENY_GLOB` | 後述の 6 件 | 保護対象の glob パターン（複数可・既定へ追記） |
 | `--max-file-bytes` | `SH_MCP_MAX_FILE_BYTES` | `5242880`（5 MiB） | 読み書き・検索・画像返却のファイルサイズ上限 |
 | `--shell` | `SH_MCP_SHELL` | Unix: `/bin/sh -c` / Win: PowerShell | `run_shell` が使うシェルコマンド列（末尾にスクリプトを付与） |
-| `--env-passthrough` | `SH_MCP_ENV_PASSTHROUGH` | なし | コマンド・MCP サーバーへ追加で渡す環境変数名（複数可） |
+| `--env-passthrough` | `SH_MCP_ENV_PASSTHROUGH` | なし | コマンド・MCP サーバーへ追加で渡す環境変数名（複数可）。末尾 `*` で前方一致（例: `AWS_*`） |
 | `--mcp-server` | `SH_MCP_MCP_SERVER` | なし | 中継するローカル stdio MCP サーバー（`name=command args...`、複数可） |
 
 ### HTTP・認証・ログ
@@ -60,5 +60,8 @@ sh-mcp \
 
 `--env-passthrough` で渡した変数は MCP サーバーだけでなく `run_command` / `run_shell` の子プロセスにも渡ります。`full` モードではエージェントが `env` 等で値を読めるため、API トークンなどを渡す場合はその前提で範囲を絞ってください。
 
-* Unix 基本リスト: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LANGUAGE`, `TERM`, `TZ`, `TMPDIR`, `LC_*`
+* Unix 基本リスト: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LANGUAGE`, `TERM`, `TZ`, `TMPDIR`, `LC_*`, `XDG_*`
 * Windows 基本リスト: `PATH`, `PATHEXT`, `SystemRoot`, `SystemDrive`, `windir`, `COMSPEC`, `TEMP`, `TMP`, `USERPROFILE`, `USERNAME`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramData`, `ProgramFiles`, `ProgramFiles(x86)`, `CommonProgramFiles`, `PROCESSOR_ARCHITECTURE`, `NUMBER_OF_PROCESSORS`, `OS`, `PSModulePath`
+* 共通（ツールチェーン・プロキシ・CA 証明書）: `GOPATH`, `GOROOT`, `GOBIN`, `GOCACHE`, `GOMODCACHE`, `GOENV`, `GOFLAGS`, `GOTOOLCHAIN`, `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GONOSUMDB`, `GOSUMDB`, `CARGO_HOME`, `RUSTUP_HOME`, `JAVA_HOME`, `NVM_DIR`, `NODE_PATH`, `PYENV_ROOT`, `VIRTUAL_ENV`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`（小文字も可）, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`
+
+`SSH_AUTH_SOCK`（ssh-agent 経由の `git push` 等）や API キーのように権限を伴う変数は基本リストに含めていません。必要な場合は `--env-passthrough` で明示します。

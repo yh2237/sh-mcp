@@ -113,7 +113,12 @@ func samePath(a, b string) bool {
 	return a == b
 }
 
-var baseEnvUnix = []string{"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TZ", "TMPDIR"}
+// Child processes get only these variables plus --env-passthrough. A
+// trailing "*" matches by prefix.
+var baseEnvUnix = []string{
+	"PATH", "HOME", "USER", "LOGNAME", "SHELL", "LANG", "LANGUAGE", "TERM", "TZ", "TMPDIR",
+	"LC_*", "XDG_*",
+}
 
 var baseEnvWindows = []string{
 	"PATH", "PATHEXT", "SystemRoot", "SystemDrive", "windir", "COMSPEC",
@@ -123,35 +128,64 @@ var baseEnvWindows = []string{
 	"PSModulePath",
 }
 
+// Toolchain locations, proxies and CA bundles, so builds work as in the
+// owner's shell. None of them is a secret by itself.
+var baseEnvCommon = []string{
+	"GOPATH", "GOROOT", "GOBIN", "GOCACHE", "GOMODCACHE", "GOENV", "GOFLAGS", "GOTOOLCHAIN",
+	"GOPROXY", "GONOPROXY", "GOPRIVATE", "GONOSUMDB", "GOSUMDB",
+	"CARGO_HOME", "RUSTUP_HOME", "JAVA_HOME", "NVM_DIR", "NODE_PATH",
+	"PYENV_ROOT", "VIRTUAL_ENV",
+	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+	"http_proxy", "https_proxy", "no_proxy", "all_proxy",
+	"SSL_CERT_FILE", "SSL_CERT_DIR", "NODE_EXTRA_CA_CERTS",
+}
+
 func buildEnv(passthrough, secret []string) []string {
-	allow := map[string]bool{}
-	base := baseEnvUnix
-	if runtime.GOOS == "windows" {
-		base = baseEnvWindows
-	}
 	norm := func(k string) string {
 		if runtime.GOOS == "windows" {
 			return strings.ToUpper(k)
 		}
 		return k
 	}
-	for _, k := range base {
-		allow[norm(k)] = true
+	base := baseEnvUnix
+	if runtime.GOOS == "windows" {
+		base = baseEnvWindows
 	}
-	for _, k := range passthrough {
-		allow[norm(k)] = true
+	exact := map[string]bool{}
+	var prefixes []string
+	for _, list := range [][]string{base, baseEnvCommon, passthrough} {
+		for _, k := range list {
+			if p, ok := strings.CutSuffix(k, "*"); ok {
+				prefixes = append(prefixes, norm(p))
+			} else {
+				exact[norm(k)] = true
+			}
+		}
 	}
+	secrets := map[string]bool{}
 	for _, k := range secret {
-		delete(allow, norm(k))
+		secrets[norm(k)] = true
+	}
+	allowed := func(k string) bool {
+		k = norm(k)
+		if secrets[k] {
+			return false
+		}
+		if exact[k] {
+			return true
+		}
+		for _, p := range prefixes {
+			if strings.HasPrefix(k, p) {
+				return true
+			}
+		}
+		return false
 	}
 
 	var env []string
 	for _, kv := range os.Environ() {
 		k, _, ok := strings.Cut(kv, "=")
-		if !ok || k == "" {
-			continue
-		}
-		if allow[norm(k)] || (runtime.GOOS != "windows" && strings.HasPrefix(k, "LC_")) {
+		if ok && k != "" && allowed(k) {
 			env = append(env, kv)
 		}
 	}

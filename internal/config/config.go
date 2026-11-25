@@ -41,6 +41,7 @@ type Config struct {
 
 	Mode                string
 	AllowedDirs         []string
+	AllowedReadDirs     []string
 	AutoApproveCommands []string
 	DenyGlobs           []string
 	EnvPassthrough      []string
@@ -102,6 +103,7 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 
 	b.str(&c.Mode, "mode", `what the agent may do: "read" (read files), "ask" (also change files and run commands, each approved by the user) or "full" (anything the user running sh-mcp can do)`)
 	b.list(&c.AllowedDirs, "allow-dir", false, "directory the tools may access (repeatable; required for http, default for stdio: working directory)")
+	b.list(&c.AllowedReadDirs, "allow-read-dir", false, "additional directory that read-only tools may read without allowing writes (repeatable)")
 	b.list(&c.AutoApproveCommands, "auto-approve-command", false, "program run_command may start without approval in --mode ask (repeatable)")
 	b.list(&c.DenyGlobs, "deny-glob", true, "additional glob of files the file tools must not touch, or with a leading ! files to exempt (repeatable; added to the defaults)")
 	b.list(&c.EnvPassthrough, "env-passthrough", false, "extra environment variable passed to commands and MCP servers; NAME* passes every variable starting with NAME (repeatable)")
@@ -265,6 +267,14 @@ func (c *Config) Finalize() error {
 			continue
 		}
 		c.AllowedDirs[i] = abs
+	}
+	for i, d := range c.AllowedReadDirs {
+		abs, err := filepath.Abs(expandHome(d))
+		if err != nil {
+			errs = append(errs, fmt.Errorf("--allow-read-dir %s: %w", d, err))
+			continue
+		}
+		c.AllowedReadDirs[i] = abs
 	}
 
 	if c.Transport == TransportHTTP {

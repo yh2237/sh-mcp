@@ -36,6 +36,12 @@ func registerInfo(s *mcp.Server, d *Deps) {
 		for _, dir := range d.Guard.Dirs() {
 			fmt.Fprintf(&b, "  - %s\n", dir)
 		}
+		if readDirs := d.Guard.ReadDirs(); len(readDirs) > 0 {
+			fmt.Fprintf(&b, "allowed_read_dirs:\n")
+			for _, dir := range readDirs {
+				fmt.Fprintf(&b, "  - %s\n", dir)
+			}
+		}
 		fmt.Fprintf(&b, "default_dir: %s (relative paths resolve here)\n", d.Guard.DefaultDir())
 		fmt.Fprintf(&b, "mode: %s\n", d.Cfg.Mode)
 		switch d.Cfg.Mode {

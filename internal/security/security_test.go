@@ -243,3 +243,36 @@ func TestGuardDirsPreserveOrder(t *testing.T) {
 		t.Errorf("DefaultDir() = %q, want %q", g.DefaultDir(), zdir)
 	}
 }
+
+func TestGuardReadDirs(t *testing.T) {
+	base := t.TempDir()
+	rw := filepath.Join(base, "rw")
+	ro := filepath.Join(base, "ro")
+	nestedRW := filepath.Join(ro, "writable")
+	for _, d := range []string{rw, ro, nestedRW} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	g, err := NewGuardWithReadDirs([]string{rw, nestedRW}, []string{ro}, []string{"**/.env"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer g.Close()
+
+	if got := g.ReadDirs(); !slices.Equal(got, []string{ro}) {
+		t.Errorf("ReadDirs() = %v, want [%s]", got, ro)
+	}
+	if _, err := g.ResolveRead(filepath.Join(ro, "note.txt")); err != nil {
+		t.Errorf("ResolveRead in ro dir failed: %v", err)
+	}
+	if _, err := g.Resolve(filepath.Join(ro, "note.txt")); !errors.Is(err, ErrReadOnly) {
+		t.Errorf("Resolve in ro dir: err = %v, want ErrReadOnly", err)
+	}
+	if _, err := g.ResolveRead(filepath.Join(ro, ".env")); !errors.Is(err, ErrDenied) {
+		t.Errorf("ResolveRead denied file in ro dir: err = %v, want ErrDenied", err)
+	}
+	if _, err := g.Resolve(filepath.Join(nestedRW, "ok.txt")); err != nil {
+		t.Errorf("Resolve in nested rw dir inside ro dir failed: %v", err)
+	}
+}

@@ -51,7 +51,7 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 			return nil, err
 		}
 	}
-	guard, err := security.NewGuard(cfg.AllowedDirs, cfg.DenyGlobs)
+	guard, err := security.NewGuardWithReadDirs(cfg.AllowedDirs, cfg.AllowedReadDirs, cfg.DenyGlobs)
 	if err != nil {
 		return nil, err
 	}
@@ -96,6 +96,7 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 		"transport", cfg.Transport,
 		"mode", cfg.Mode,
 		"allowed_dirs", guard.Dirs(),
+		"allowed_read_dirs", guard.ReadDirs(),
 		"deny_globs", cfg.DenyGlobs,
 		"oauth", oa != nil,
 		"tools", tools.ToolNames(cfg, gitPath != ""),

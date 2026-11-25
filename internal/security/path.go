@@ -13,6 +13,7 @@ import (
 
 var (
 	ErrOutsideRoots = errors.New("path is outside the allowed directories (--allow-dir)")
+	ErrReadOnly     = errors.New("path is in a read-only directory (--allow-read-dir)")
 	ErrDenied       = errors.New("path is protected by --deny-glob")
 )
 
@@ -20,11 +21,13 @@ var (
 // operations must go through the *os.Root returned by Resolve, which rejects
 // ".." and symlink escapes atomically at open time (no check-then-use race).
 type Guard struct {
-	roots  []rootEntry // sorted longest dir first so nested roots win
-	dirs   []string    // allowed dirs in configured order (dirs[0] is def)
-	deny   []string
-	except []string
-	def    string
+	roots     []rootEntry // sorted longest dir first so nested roots win
+	readRoots []rootEntry // read-only roots, sorted longest dir first
+	dirs      []string    // allowed dirs in configured order (dirs[0] is def)
+	readDirs  []string    // read-only dirs in configured order
+	deny      []string
+	except    []string
+	def       string
 }
 
 type rootEntry struct {
@@ -51,6 +54,12 @@ func (r *Resolved) Release() {
 // NewGuard confines access to dirs. A deny glob starting with "!" exempts
 // matching paths from the other deny globs.
 func NewGuard(dirs, denyGlobs []string) (*Guard, error) {
+	return NewGuardWithReadDirs(dirs, nil, denyGlobs)
+}
+
+// NewGuardWithReadDirs is NewGuard with additional directories that read-only
+// tools may read without allowing writes or command working directories.
+func NewGuardWithReadDirs(dirs, readDirs, denyGlobs []string) (*Guard, error) {
 	if len(dirs) == 0 {
 		return nil, errors.New("no allowed directories")
 	}
@@ -72,12 +81,26 @@ func NewGuard(dirs, denyGlobs []string) (*Guard, error) {
 		g.dirs = append(g.dirs, d)
 		g.roots = append(g.roots, rootEntry{dir: d, root: r})
 	}
+	for _, d := range readDirs {
+		d = filepath.Clean(d)
+		r, err := os.OpenRoot(d)
+		if err != nil {
+			g.Close()
+			return nil, fmt.Errorf("open allowed read dir %s: %w", d, err)
+		}
+		g.readDirs = append(g.readDirs, d)
+		g.readRoots = append(g.readRoots, rootEntry{dir: d, root: r})
+	}
 	sort.SliceStable(g.roots, func(i, j int) bool { return len(g.roots[i].dir) > len(g.roots[j].dir) })
+	sort.SliceStable(g.readRoots, func(i, j int) bool { return len(g.readRoots[i].dir) > len(g.readRoots[j].dir) })
 	return g, nil
 }
 
 func (g *Guard) Close() {
 	for _, r := range g.roots {
+		r.root.Close()
+	}
+	for _, r := range g.readRoots {
 		r.root.Close()
 	}
 }
@@ -86,6 +109,10 @@ func (g *Guard) DefaultDir() string { return g.def }
 
 func (g *Guard) Dirs() []string {
 	return append([]string(nil), g.dirs...)
+}
+
+func (g *Guard) ReadDirs() []string {
+	return append([]string(nil), g.readDirs...)
 }
 
 // Abs returns the cleaned absolute form of p (relative paths are relative to
@@ -112,25 +139,66 @@ func (g *Guard) Resolve(p string) (*Resolved, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, r := range g.roots {
-		rel, err := filepath.Rel(r.dir, abs)
-		if err != nil || !(rel == "." || filepath.IsLocal(rel)) {
-			continue
-		}
+	if r, rel, ok := matchRoot(g.roots, abs); ok {
 		if g.isDenied(abs) {
 			return nil, fmt.Errorf("%s: %w", abs, ErrDenied)
 		}
 		return &Resolved{Abs: abs, RootDir: r.dir, Root: r.root, Rel: rel}, nil
 	}
+	if _, _, ok := matchRoot(g.readRoots, abs); ok {
+		return nil, fmt.Errorf("%s: %w", abs, ErrReadOnly)
+	}
 	return nil, fmt.Errorf("%s: %w %v", abs, ErrOutsideRoots, g.Dirs())
 }
 
-// ResolveOutside is Resolve for a path the user allowed reading although it
-// is outside the allowed directories. It opens a root at the directory (or
+// ResolveRead resolves p for read-only tools, accepting both --allow-dir and
+// --allow-read-dir. When roots nest, the longest matching directory wins.
+func (g *Guard) ResolveRead(p string) (*Resolved, error) {
+	abs, err := g.Abs(p)
+	if err != nil {
+		return nil, err
+	}
+	rw, rwRel, rwOK := matchRoot(g.roots, abs)
+	ro, roRel, roOK := matchRoot(g.readRoots, abs)
+	var chosen rootEntry
+	var rel string
+	switch {
+	case rwOK && roOK:
+		if len(ro.dir) > len(rw.dir) {
+			chosen, rel = ro, roRel
+		} else {
+			chosen, rel = rw, rwRel
+		}
+	case rwOK:
+		chosen, rel = rw, rwRel
+	case roOK:
+		chosen, rel = ro, roRel
+	default:
+		return nil, fmt.Errorf("%s: %w %v", abs, ErrOutsideRoots, g.Dirs())
+	}
+	if g.isDenied(abs) {
+		return nil, fmt.Errorf("%s: %w", abs, ErrDenied)
+	}
+	return &Resolved{Abs: abs, RootDir: chosen.dir, Root: chosen.root, Rel: rel}, nil
+}
+
+func matchRoot(roots []rootEntry, abs string) (rootEntry, string, bool) {
+	for _, r := range roots {
+		rel, err := filepath.Rel(r.dir, abs)
+		if err != nil || !(rel == "." || filepath.IsLocal(rel)) {
+			continue
+		}
+		return r, rel, true
+	}
+	return rootEntry{}, "", false
+}
+
+// ResolveOutside is ResolveRead for a path the user allowed reading although
+// it is outside the allowed directories. It opens a root at the directory (or
 // at a file's parent), so symlinks cannot lead out of what was approved, and
 // the deny globs still apply. Call Release when done.
 func (g *Guard) ResolveOutside(p string) (*Resolved, error) {
-	r, err := g.Resolve(p)
+	r, err := g.ResolveRead(p)
 	if !errors.Is(err, ErrOutsideRoots) {
 		return r, err
 	}

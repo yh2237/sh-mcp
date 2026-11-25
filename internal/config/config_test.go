@@ -121,6 +121,23 @@ func TestGenTokenSkipsValidation(t *testing.T) {
 	}
 }
 
+func TestAllowReadDir(t *testing.T) {
+	c, err := parse(t, []string{"--allow-read-dir", "ro1", "--allow-read-dir", "ro2"}, nil)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(c.AllowedReadDirs) != 2 || !filepath.IsAbs(c.AllowedReadDirs[0]) || !filepath.IsAbs(c.AllowedReadDirs[1]) {
+		t.Fatalf("AllowedReadDirs = %v", c.AllowedReadDirs)
+	}
+	c2, err := parse(t, nil, map[string]string{"SH_MCP_ALLOW_READ_DIR": "ro1;ro2"})
+	if err != nil {
+		t.Fatalf("parse from env: %v", err)
+	}
+	if len(c2.AllowedReadDirs) != 2 {
+		t.Fatalf("AllowedReadDirs from env = %v", c2.AllowedReadDirs)
+	}
+}
+
 func TestInvalid(t *testing.T) {
 	cases := []struct {
 		args []string

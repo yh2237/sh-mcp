@@ -138,7 +138,7 @@ func (d *Deps) approveOutside(req *mcp.CallToolRequest, paths ...string) (bool, 
 		if p == "" {
 			continue
 		}
-		if _, err := d.Guard.Resolve(p); !errors.Is(err, security.ErrOutsideRoots) {
+		if _, err := d.Guard.ResolveRead(p); !errors.Is(err, security.ErrOutsideRoots) {
 			continue
 		}
 		abs, err := d.Guard.Abs(p)
@@ -169,7 +169,7 @@ func (d *Deps) resolveRead(p string, outside bool) (*security.Resolved, error) {
 	if outside {
 		return d.Guard.ResolveOutside(p)
 	}
-	return d.Guard.Resolve(p)
+	return d.Guard.ResolveRead(p)
 }
 
 // approvalMessage shortens a long message for the prompt and says so, so a

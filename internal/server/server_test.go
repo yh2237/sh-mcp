@@ -794,3 +794,34 @@ func TestReadManyFiles(t *testing.T) {
 	h.fail("read_file", map[string]any{"path": "a.txt", "paths": []string{"b.txt"}}, "not both")
 	h.fail("read_file", map[string]any{}, "path or paths is required")
 }
+
+func TestAllowReadDir(t *testing.T) {
+	roDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(roDir, "skill.md"), []byte("hello skill\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(roDir, ".env"), []byte("SECRET=1\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h := newHarness(t, config.ModeFull, func(c *config.Config) {
+		c.AllowedReadDirs = []string{roDir}
+	})
+
+	if env := h.ok("get_environment", nil); !strings.Contains(env, "allowed_read_dirs:\n  - "+roDir) {
+		t.Errorf("get_environment missing allowed_read_dirs:\n%s", env)
+	}
+	if out := h.ok("read_file", map[string]any{"path": filepath.Join(roDir, "skill.md")}); !strings.Contains(out, "hello skill") {
+		t.Errorf("read_file in read-only dir: %s", out)
+	}
+	if out := h.ok("list_dir", map[string]any{"path": roDir}); !strings.Contains(out, "skill.md") || strings.Contains(out, ".env") {
+		t.Errorf("list_dir in read-only dir: %s", out)
+	}
+	if out := h.ok("search_files", map[string]any{"path": roDir, "pattern": "hello"}); !strings.Contains(out, "skill.md") {
+		t.Errorf("search_files in read-only dir: %s", out)
+	}
+	h.fail("read_file", map[string]any{"path": filepath.Join(roDir, ".env")}, "protected by --deny-glob")
+	h.fail("write_file", map[string]any{"path": filepath.Join(roDir, "new.txt"), "content": "x"}, "read-only directory")
+	h.fail("edit_file", map[string]any{"path": filepath.Join(roDir, "skill.md"), "edits": []map[string]any{{"old_text": "hello", "new_text": "bye"}}}, "read-only directory")
+	h.fail("delete_file", map[string]any{"path": filepath.Join(roDir, "skill.md")}, "read-only directory")
+	h.fail("run_command", map[string]any{"command": "go", "args": []string{"version"}, "cwd": roDir}, "read-only directory")
+}

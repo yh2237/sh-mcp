@@ -111,10 +111,11 @@ func (d *Deps) gitTarget(p string) (dir, pathspec string, err error) {
 	if p == "" {
 		p = "."
 	}
-	r, err := d.Guard.Resolve(p)
+	r, err := d.Guard.ResolveRead(p)
 	if err != nil {
 		return "", "", err
 	}
+	defer r.Release()
 	fi, err := r.Root.Stat(r.Rel)
 	switch {
 	case err == nil && fi.IsDir():

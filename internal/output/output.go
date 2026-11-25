@@ -15,6 +15,9 @@ type Ring struct {
 	total   int64
 	changed chan struct{}
 	closed  bool
+	// activity counts writes, pokes and the close, so a waiter can tell
+	// whether anything happened since it last looked.
+	activity uint64
 }
 
 func NewRing(max int) *Ring {
@@ -49,6 +52,7 @@ func (r *Ring) Close() {
 }
 
 func (r *Ring) notifyLocked() {
+	r.activity++
 	close(r.changed)
 	r.changed = make(chan struct{})
 }
@@ -76,12 +80,12 @@ func (r *Ring) Total() int64 {
 	return r.total
 }
 
-// Changed returns a channel closed on the next write or Close, and the
-// current total, so callers can wait for output beyond an offset.
-func (r *Ring) Changed() (<-chan struct{}, int64, bool) {
+// Watch returns a channel closed on the next write, poke or Close, together
+// with the activity count it belongs to and whether the ring is closed.
+func (r *Ring) Watch() (changed <-chan struct{}, activity uint64, closed bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	return r.changed, r.total, r.closed
+	return r.changed, r.activity, r.closed
 }
 
 // TruncateMiddle keeps the beginning and the end of b within max bytes,

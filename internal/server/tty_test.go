@@ -50,6 +50,29 @@ func TestTTYSession(t *testing.T) {
 	}
 }
 
+func TestTTYInputNotRead(t *testing.T) {
+	h := newHarness(t, config.ModeFull, nil)
+	// sleep never reads its terminal: a large stdin fills the terminal's
+	// buffer. Starting it must not wait for that, nor block other calls.
+	big := strings.Repeat("x", 1<<20)
+	start := time.Now()
+	h.ok("run_command", map[string]any{"command": "sleep", "args": []string{"30"}, "tty": true, "stdin": big, "wait_sec": 1, "timeout_sec": 60})
+	t.Cleanup(func() { h.call("kill_job", map[string]any{"job_id": "job-1"}) })
+	h.ok("list_jobs", nil)
+	if time.Since(start) > 10*time.Second {
+		t.Fatalf("starting a job with unread input took %s", time.Since(start))
+	}
+	// Depending on the terminal the input is refused once its buffer is full
+	// ("not reading its input") or taken and echoed; either way the call
+	// returns within its wait.
+	start = time.Now()
+	h.call("write_stdin", map[string]any{"job_id": "job-1", "input": big, "wait_sec": 1})
+	if time.Since(start) > 10*time.Second {
+		t.Errorf("write_stdin to a program that does not read took %s", time.Since(start))
+	}
+	h.ok("kill_job", map[string]any{"job_id": "job-1"})
+}
+
 func TestInterruptWithoutTTY(t *testing.T) {
 	h := newHarness(t, config.ModeFull, nil)
 	out := h.ok("run_shell", map[string]any{"script": "sleep 30", "wait_sec": 0, "timeout_sec": 60})

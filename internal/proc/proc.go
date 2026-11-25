@@ -50,7 +50,8 @@ func (t *Tree) Process() *os.Process { return t.p }
 func (t *Tree) Kill() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.p == nil {
+	// After Close the process group or job is gone; its id may be reused.
+	if t.p == nil || t.closed {
 		return nil
 	}
 	return killTree(t.p, &t.plat)

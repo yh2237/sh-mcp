@@ -61,6 +61,10 @@ type Job struct {
 	term   *terminal
 	copied chan struct{}
 	screen *output.Terminal
+	// inputSem serializes writes to the terminal; exchangeMu serializes
+	// write_stdin calls so each gets its own part of the output.
+	inputSem   chan struct{}
+	exchangeMu sync.Mutex
 
 	mu       sync.Mutex
 	state    string
@@ -156,13 +160,11 @@ func (m *Manager) Start(o StartOptions) (*Job, error) {
 		}
 		j.tree, j.waitProc, j.term, j.copied = tree, wait, term, make(chan struct{})
 		j.screen = output.NewTerminal(j.out)
+		j.inputSem = make(chan struct{}, 1)
 		go func() {
 			_, _ = io.Copy(io.MultiWriter(j.screen, poker{j.out}), term.out)
 			close(j.copied)
 		}()
-		if o.Stdin != "" {
-			_, _ = term.in.Write([]byte(o.Stdin))
-		}
 	} else {
 		tree, err := proc.Start(cmd)
 		if err != nil {
@@ -180,6 +182,11 @@ func (m *Manager) Start(o StartOptions) (*Job, error) {
 	}
 	m.jobs[j.ID] = j
 	go j.wait()
+	if o.TTY && o.Stdin != "" {
+		// Typed in the background: a program that does not read its input
+		// must not hold up Start, which runs under the manager's lock.
+		go func() { _ = j.WriteInput(o.Stdin, o.Timeout) }()
+	}
 	return j, nil
 }
 
@@ -372,18 +379,74 @@ var ErrNoTTY = errors.New("this job was not started with tty=true, so its input 
 
 func (j *Job) TTY() bool { return j.term != nil }
 
-// WriteInput types s into the job's terminal.
-func (j *Job) WriteInput(s string) error {
+// ErrInputBlocked is returned when the program does not read what is typed.
+var ErrInputBlocked = errors.New("the program is not reading its input; the rest will be typed when it does")
+
+// WriteInput types s into the job's terminal, giving up after timeout (0
+// means no limit) if the program does not read it. Writes never interleave.
+func (j *Job) WriteInput(s string, timeout time.Duration) error {
 	if j.term == nil {
 		return ErrNoTTY
 	}
+	var expired <-chan time.Time
+	if timeout > 0 {
+		t := time.NewTimer(timeout)
+		defer t.Stop()
+		expired = t.C
+	}
 	select {
+	case j.inputSem <- struct{}{}:
 	case <-j.done:
 		return fmt.Errorf("%s has already ended", j.ID)
-	default:
+	case <-expired:
+		return ErrInputBlocked
 	}
-	_, err := j.term.in.Write([]byte(s))
-	return err
+	written := make(chan error, 1)
+	go func() {
+		_, err := j.term.in.Write([]byte(s))
+		<-j.inputSem
+		written <- err
+	}()
+	select {
+	case err := <-written:
+		return err
+	case <-j.done:
+		return fmt.Errorf("%s has already ended", j.ID)
+	case <-expired:
+		return ErrInputBlocked
+	}
+}
+
+// Exchange types input into a terminal job (or, for a job without one,
+// delivers a lone Ctrl-C as a signal) and returns the output that follows,
+// once it pauses for idle or wait elapses. Calls are serialized, so each
+// returns the output after the previous one.
+func (j *Job) Exchange(ctx context.Context, input string, wait, idle time.Duration, maxBytes int) (data []byte, dropped int64, more bool, err error) {
+	j.exchangeMu.Lock()
+	defer j.exchangeMu.Unlock()
+	_, since, _ := j.out.Watch()
+	from := j.Cursor()
+	if j.term == nil {
+		from = j.out.Total() // before the signal, so its handler's output is kept
+		if input != "" {
+			if input != "\x03" {
+				return nil, 0, false, ErrNoTTY
+			}
+			if err := j.Interrupt(); err != nil {
+				return nil, 0, false, err
+			}
+		}
+	} else if input != "" {
+		if err := j.WriteInput(input, wait); err != nil {
+			return nil, 0, false, err
+		}
+	}
+	j.WaitOutput(ctx, since, wait, idle)
+	data, next, dropped := j.Read(from, maxBytes)
+	if j.term != nil {
+		j.SetCursor(next)
+	}
+	return data, dropped, next < j.out.Total(), nil
 }
 
 // Interrupt sends Ctrl-C to the job's processes (for jobs without a terminal,
@@ -403,25 +466,28 @@ func (j *Job) SetCursor(offset int64) {
 	j.cursor = max(j.cursor, offset)
 }
 
-// WaitOutput waits for output beyond from and returns once it has paused for
-// idle, so interactive programs answer quickly; it also returns when the job
-// ends, d elapses or ctx is done.
-func (j *Job) WaitOutput(ctx context.Context, from int64, d, idle time.Duration) {
+// WaitOutput waits for output activity after the activity count since and
+// returns once it has paused for idle, so interactive programs answer
+// quickly; it also returns when the job ends, d elapses or ctx is done.
+// Counting activity (not bytes) also notices a prompt being redrawn, which
+// adds no finished line.
+func (j *Job) WaitOutput(ctx context.Context, since uint64, d, idle time.Duration) {
 	deadline := time.NewTimer(d)
 	defer deadline.Stop()
 	quiet := time.NewTimer(idle)
+	quiet.Stop() // armed once something happens
 	defer quiet.Stop()
-	if j.out.Total() <= from {
-		quiet.Stop() // armed once output arrives
-	}
 	for {
-		changed, _, closed := j.out.Changed()
+		changed, activity, closed := j.out.Watch()
 		if closed {
 			return
 		}
+		if activity != since {
+			since = activity
+			quiet.Reset(idle)
+		}
 		select {
 		case <-changed:
-			quiet.Reset(idle)
 		case <-quiet.C:
 			return
 		case <-deadline.C:

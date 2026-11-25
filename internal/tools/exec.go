@@ -279,32 +279,18 @@ func (d *Deps) writeStdin(ctx context.Context, req *mcp.CallToolRequest, in writ
 	if err != nil {
 		return "", err
 	}
-	if in.Input != "" {
-		if !j.TTY() {
-			// Without a terminal, Ctrl-C can still be delivered as a signal.
-			if in.Input != "\x03" {
-				return "", jobs.ErrNoTTY
-			}
-			if err := j.Interrupt(); err != nil {
-				return "", err
-			}
-		} else {
-			msg := fmt.Sprintf("Type this into %s (%s)?\n%s", j.ID, j.Command, strconv.Quote(in.Input))
-			if err := d.approve(req, msg); err != nil {
-				return "", err
-			}
-			if err := j.WriteInput(in.Input); err != nil {
-				return "", err
-			}
+	if in.Input != "" && j.TTY() {
+		msg := fmt.Sprintf("Type this into %s (%s)?\n%s", j.ID, j.Command, strconv.Quote(in.Input))
+		if err := d.approve(req, msg); err != nil {
+			return "", err
 		}
 	}
-	from := j.Cursor()
-	if !j.TTY() {
-		from = j.Info().OutputBytes
+	// Without a terminal only Ctrl-C can be sent, as a signal (like kill_job,
+	// it needs no approval).
+	data, dropped, more, err := j.Exchange(ctx, in.Input, secOrDefault(in.WaitSec, defaultStdinWaitSec, maxWaitSec), outputPause, maxResultBytes)
+	if err != nil {
+		return "", err
 	}
-	j.WaitOutput(ctx, from, secOrDefault(in.WaitSec, defaultStdinWaitSec, maxWaitSec), outputPause)
-	data, next, dropped := j.Read(from, maxResultBytes)
-	j.SetCursor(next)
 	info := j.Info()
 	var b strings.Builder
 	b.WriteString(formatJob(info))
@@ -314,7 +300,7 @@ func (d *Deps) writeStdin(ctx context.Context, req *mcp.CallToolRequest, in writ
 		return b.String(), nil
 	}
 	writeOutput(&b, data, dropped)
-	if next < info.OutputBytes {
+	if more {
 		b.WriteString("(more output follows: call write_stdin with empty input to read it)\n")
 	}
 	return b.String(), nil

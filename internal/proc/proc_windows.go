@@ -6,6 +6,8 @@ import (
 	"errors"
 	"os"
 	"os/exec"
+	"sort"
+	"strings"
 	"syscall"
 	"unsafe"
 
@@ -127,8 +129,10 @@ func StartPseudoConsole(path, cmdLine, dir string, env []string, cols, rows int1
 	pc := &PseudoConsole{In: os.NewFile(uintptr(inWrite), "conpty-in"), Out: os.NewFile(uintptr(outRead), "conpty-out"), hpc: hpc}
 	t, err := startInConsole(path, cmdLine, dir, env, hpc)
 	if err != nil {
-		pc.Close()
+		// Close the output first: on older Windows, closing the console
+		// waits for its output to be read.
 		pc.Out.Close()
+		pc.Close()
 		return nil, nil, err
 	}
 	return t, pc, nil
@@ -220,6 +224,8 @@ func envBlock(env []string) (*uint16, error) {
 		seen[key] = len(kept)
 		kept = append(kept, kv)
 	}
+	// Windows expects the block sorted by name, case-insensitively.
+	sort.SliceStable(kept, func(a, b int) bool { return envSortKey(kept[a]) < envSortKey(kept[b]) })
 	var b []uint16
 	for _, kv := range kept {
 		s, err := windows.UTF16FromString(kv)
@@ -246,12 +252,12 @@ func indexEnvSep(kv string) int {
 	return -1
 }
 
-func windowsEnvKey(k string) string {
-	b := []byte(k)
-	for i, c := range b {
-		if c >= 'a' && c <= 'z' {
-			b[i] = c - 'a' + 'A'
-		}
+// windowsEnvKey folds a variable name the way Windows compares them.
+func windowsEnvKey(k string) string { return strings.ToUpper(k) }
+
+func envSortKey(kv string) string {
+	if i := indexEnvSep(kv); i >= 0 {
+		kv = kv[:i]
 	}
-	return string(b)
+	return windowsEnvKey(kv)
 }

@@ -30,13 +30,18 @@ type echoInput struct {
 
 func runTestMCPServer() {
 	s := mcp.NewServer(&mcp.Implementation{Name: "test-downstream", Version: "1.0"}, nil)
-	mcp.AddTool(s, &mcp.Tool{Name: "echo", Description: "Echo text back."},
+	readOnly := &mcp.ToolAnnotations{ReadOnlyHint: true}
+	mcp.AddTool(s, &mcp.Tool{Name: "echo", Description: "Echo text back.", Annotations: readOnly},
 		func(_ context.Context, _ *mcp.CallToolRequest, in echoInput) (*mcp.CallToolResult, any, error) {
 			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "echo: " + in.Text}}}, nil, nil
 		})
-	mcp.AddTool(s, &mcp.Tool{Name: "fail", Description: "Always fails."},
+	mcp.AddTool(s, &mcp.Tool{Name: "fail", Description: "Always fails.", Annotations: readOnly},
 		func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
 			return nil, nil, errors.New("downstream broke")
+		})
+	mcp.AddTool(s, &mcp.Tool{Name: "save", Description: "Pretends to change something."},
+		func(context.Context, *mcp.CallToolRequest, struct{}) (*mcp.CallToolResult, any, error) {
+			return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: "saved"}}}, nil, nil
 		})
 	_ = s.Run(context.Background(), &mcp.StdioTransport{})
 }
@@ -71,7 +76,7 @@ func TestMCPRelayConfigured(t *testing.T) {
 		t.Errorf("list servers: %s", out)
 	}
 	out := h.ok("list_mcp_tools", map[string]any{"server": "down"})
-	if !strings.Contains(out, "## echo") || !strings.Contains(out, `"text"`) || !strings.Contains(out, "2 tools") {
+	if !strings.Contains(out, "## echo") || !strings.Contains(out, `"text"`) || !strings.Contains(out, "3 tools") {
 		t.Errorf("list tools: %s", out)
 	}
 	out = h.ok("call_mcp_tool", map[string]any{"server": "down", "tool": "echo", "arguments": map[string]any{"text": "こんにちは"}})
@@ -79,6 +84,7 @@ func TestMCPRelayConfigured(t *testing.T) {
 		t.Errorf("call: %q", out)
 	}
 	h.fail("call_mcp_tool", map[string]any{"server": "down", "tool": "fail"}, "downstream broke")
+	h.fail("call_mcp_tool", map[string]any{"server": "down", "tool": "save"}, "only relays read-only tools")
 	h.fail("call_mcp_tool", map[string]any{"server": "nope", "tool": "echo"}, "no MCP server")
 	if out := h.ok("list_mcp_servers", nil); !strings.Contains(out, "down: running") || !strings.Contains(out, "test-downstream") {
 		t.Errorf("after use: %s", out)
@@ -89,11 +95,14 @@ func TestMCPRelayDynamic(t *testing.T) {
 	argv := testServerArgv(t)
 	h := newHarness(t, config.ModeFull, nil)
 	out := h.ok("start_mcp_server", map[string]any{"server": "dyn", "command": argv[0], "args": argv[1:]})
-	if !strings.Contains(out, "started dyn") || !strings.Contains(out, "2 tools") {
+	if !strings.Contains(out, "started dyn") || !strings.Contains(out, "3 tools") {
 		t.Fatalf("connect: %s", out)
 	}
 	if out := h.ok("call_mcp_tool", map[string]any{"server": "dyn", "tool": "echo", "arguments": map[string]any{"text": "x"}}); out != "echo: x" {
 		t.Errorf("call: %q", out)
+	}
+	if out := h.ok("call_mcp_tool", map[string]any{"server": "dyn", "tool": "save"}); out != "saved" {
+		t.Errorf("full mode relays any tool: %q", out)
 	}
 	h.ok("stop_mcp_server", map[string]any{"server": "dyn"})
 	if out := h.ok("list_mcp_servers", nil); strings.Contains(out, "dyn") {

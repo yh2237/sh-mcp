@@ -11,6 +11,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"github.com/yh2237/sh-mcp/internal/config"
 	"github.com/yh2237/sh-mcp/internal/output"
 	"github.com/yh2237/sh-mcp/internal/proxy"
 )
@@ -79,10 +80,17 @@ func registerMCP(s *mcp.Server, d *Deps) {
 		Annotations: readOnlyAnn,
 	}, func(in mcpServerInput) map[string]any { return map[string]any{"server": in.Server} }, d.mcpListTools)
 
+	callDesc := "Call a tool of another MCP server and return its result. " + untrustedNote
+	switch {
+	case !d.Cfg.CanWrite():
+		callDesc += " Only tools that their server marks read-only can be called in this mode."
+	case d.needsApproval():
+		callDesc += " Tools not marked read-only wait for the user's approval."
+	}
 	addContentTool(s, d, &mcp.Tool{
 		Name:        "call_mcp_tool",
 		Title:       "Call MCP server tool",
-		Description: "Call a tool of another MCP server and return its result. " + untrustedNote,
+		Description: callDesc,
 		Annotations: execAnn,
 	}, func(in mcpCallInput) map[string]any {
 		keys := make([]string, 0, len(in.Arguments))
@@ -169,7 +177,12 @@ func (d *Deps) mcpCallTool(ctx context.Context, req *mcp.CallToolRequest, in mcp
 	if err != nil {
 		return nil, err
 	}
-	if d.needsApproval() && !downstreamReadOnly(ctx, cs, in.Tool) {
+	// Tools the downstream server does not mark read-only are refused in read
+	// mode and need approval in ask mode.
+	if d.Cfg.Mode != config.ModeFull && !downstreamReadOnly(ctx, cs, in.Tool) {
+		if !d.Cfg.CanWrite() {
+			return nil, fmt.Errorf("%s/%s is not marked read-only by its server; --mode read only relays read-only tools", in.Server, in.Tool)
+		}
 		args, _ := json.Marshal(in.Arguments)
 		msg := fmt.Sprintf("Call %s/%s?\narguments: %s", in.Server, in.Tool, args)
 		if err := d.approve(req, msg); err != nil {

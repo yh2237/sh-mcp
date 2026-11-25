@@ -50,15 +50,17 @@ type Job struct {
 	Started time.Time
 	Timeout time.Duration
 
-	out   *output.Ring
-	tree  *proc.Tree
-	cmd   *exec.Cmd
-	done  chan struct{}
-	timer *time.Timer
-	// ptmx is the controlling side of the job's pseudo-terminal (tty jobs
-	// only); copied closes once its output has been read to the end.
-	ptmx   *os.File
+	out      *output.Ring
+	tree     *proc.Tree
+	waitProc func() (*os.ProcessState, error)
+	done     chan struct{}
+	timer    *time.Timer
+	// term is the job's pseudo-terminal (tty jobs only); copied closes once
+	// its output has been read to the end. screen turns that output into the
+	// plain text kept in out, except for the line still being edited.
+	term   *terminal
 	copied chan struct{}
+	screen *output.Terminal
 
 	mu       sync.Mutex
 	state    string
@@ -88,6 +90,20 @@ type StartOptions struct {
 	// TTY runs the command in a pseudo-terminal whose input stays open for
 	// WriteInput (interactive programs).
 	TTY bool
+}
+
+const (
+	ttyRows = 30
+	ttyCols = 120
+)
+
+// terminal is the controlling side of a job's pseudo-terminal.
+type terminal struct {
+	in  io.Writer // keystrokes
+	out io.Reader // what the program prints
+	// finish runs once the process tree is gone. It returns after the output
+	// has been read to the end (or given up on) and releases the terminal.
+	finish func(copied <-chan struct{})
 }
 
 func (m *Manager) Start(o StartOptions) (*Job, error) {
@@ -133,32 +149,32 @@ func (m *Manager) Start(o StartOptions) (*Job, error) {
 	if o.Configure != nil {
 		o.Configure(cmd)
 	}
-	closeChild := func() {}
 	if o.TTY {
-		ptmx, closeTTY, err := attachTTY(cmd)
+		tree, wait, term, err := startInTerminal(cmd)
 		if err != nil {
 			return nil, err
 		}
-		j.ptmx, j.copied, closeChild = ptmx, make(chan struct{}), closeTTY
-	}
-	tree, err := proc.Start(cmd)
-	closeChild() // the child has its own copy of the terminal side
-	if err != nil {
-		if j.ptmx != nil {
-			j.ptmx.Close()
-		}
-		return nil, err
-	}
-	j.cmd, j.tree, j.Started = cmd, tree, time.Now()
-	if j.ptmx != nil {
+		j.tree, j.waitProc, j.term, j.copied = tree, wait, term, make(chan struct{})
+		j.screen = output.NewTerminal(j.out)
 		go func() {
-			_, _ = io.Copy(j.out, j.ptmx)
+			_, _ = io.Copy(io.MultiWriter(j.screen, poker{j.out}), term.out)
 			close(j.copied)
 		}()
 		if o.Stdin != "" {
-			_, _ = j.ptmx.Write([]byte(o.Stdin))
+			_, _ = term.in.Write([]byte(o.Stdin))
+		}
+	} else {
+		tree, err := proc.Start(cmd)
+		if err != nil {
+			return nil, err
+		}
+		j.tree = tree
+		j.waitProc = func() (*os.ProcessState, error) {
+			err := cmd.Wait()
+			return cmd.ProcessState, err
 		}
 	}
+	j.Started = time.Now()
 	if o.Timeout > 0 {
 		j.timer = time.AfterFunc(o.Timeout, func() { j.stop(StateTimedOut) })
 	}
@@ -168,16 +184,10 @@ func (m *Manager) Start(o StartOptions) (*Job, error) {
 }
 
 func (j *Job) wait() {
-	err := j.cmd.Wait()
+	state, err := j.waitProc()
 	j.tree.Close()
-	if j.ptmx != nil {
-		// With every process gone the terminal reports end of output;
-		// don't wait forever if a stray process still holds it.
-		select {
-		case <-j.copied:
-		case <-time.After(2 * time.Second):
-		}
-		j.ptmx.Close()
+	if j.term != nil {
+		j.term.finish(j.copied)
 	}
 	if j.timer != nil {
 		j.timer.Stop()
@@ -185,8 +195,8 @@ func (j *Job) wait() {
 	j.mu.Lock()
 	j.ended = time.Now()
 	switch {
-	case j.cmd.ProcessState != nil:
-		j.exitCode = j.cmd.ProcessState.ExitCode()
+	case state != nil:
+		j.exitCode = state.ExitCode()
 	case err != nil:
 		j.exitCode = -1
 	}
@@ -303,7 +313,7 @@ func (j *Job) Info() Info {
 	defer j.mu.Unlock()
 	return Info{
 		ID: j.ID, Command: j.Command, Dir: j.Dir, State: j.state, ExitCode: j.exitCode,
-		Started: j.Started, Ended: j.ended, Timeout: j.Timeout, OutputBytes: j.out.Total(), TTY: j.ptmx != nil,
+		Started: j.Started, Ended: j.ended, Timeout: j.Timeout, OutputBytes: j.out.Total(), TTY: j.term != nil,
 	}
 }
 
@@ -338,18 +348,33 @@ func (j *Job) Wait(ctx context.Context, d time.Duration, tick func()) bool {
 	}
 }
 
+// Read returns output from offset. For a terminal job that reaches the end,
+// the line still being edited (typically a prompt) is appended; next does not
+// include it, so it is returned again, finished, by a later read.
 func (j *Job) Read(offset int64, maxBytes int) (data []byte, next, dropped int64) {
-	return j.out.ReadFrom(offset, maxBytes)
+	data, next, dropped = j.out.ReadFrom(offset, maxBytes)
+	if j.screen != nil && next == j.out.Total() {
+		data = append(data, j.screen.Pending()...)
+	}
+	return data, next, dropped
+}
+
+// poker counts any terminal output as activity, even before it becomes text.
+type poker struct{ r *output.Ring }
+
+func (p poker) Write(b []byte) (int, error) {
+	p.r.Poke()
+	return len(b), nil
 }
 
 // ErrNoTTY is returned when input is sent to a job without a terminal.
 var ErrNoTTY = errors.New("this job was not started with tty=true, so its input is closed; start it again with tty=true to interact with it")
 
-func (j *Job) TTY() bool { return j.ptmx != nil }
+func (j *Job) TTY() bool { return j.term != nil }
 
 // WriteInput types s into the job's terminal.
 func (j *Job) WriteInput(s string) error {
-	if j.ptmx == nil {
+	if j.term == nil {
 		return ErrNoTTY
 	}
 	select {
@@ -357,7 +382,7 @@ func (j *Job) WriteInput(s string) error {
 		return fmt.Errorf("%s has already ended", j.ID)
 	default:
 	}
-	_, err := j.ptmx.Write([]byte(s))
+	_, err := j.term.in.Write([]byte(s))
 	return err
 }
 
@@ -385,18 +410,18 @@ func (j *Job) WaitOutput(ctx context.Context, from int64, d, idle time.Duration)
 	deadline := time.NewTimer(d)
 	defer deadline.Stop()
 	quiet := time.NewTimer(idle)
-	quiet.Stop() // armed once output arrives
 	defer quiet.Stop()
+	if j.out.Total() <= from {
+		quiet.Stop() // armed once output arrives
+	}
 	for {
-		changed, total, closed := j.out.Changed()
+		changed, _, closed := j.out.Changed()
 		if closed {
 			return
 		}
-		if total > from {
-			quiet.Reset(idle)
-		}
 		select {
 		case <-changed:
+			quiet.Reset(idle)
 		case <-quiet.C:
 			return
 		case <-deadline.C:

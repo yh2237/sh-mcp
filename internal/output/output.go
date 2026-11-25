@@ -33,6 +33,14 @@ func (r *Ring) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// Poke wakes waiters without adding output, for activity that has not become
+// text yet (a terminal redrawing its current line).
+func (r *Ring) Poke() {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.notifyLocked()
+}
+
 func (r *Ring) Close() {
 	r.mu.Lock()
 	defer r.mu.Unlock()

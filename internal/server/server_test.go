@@ -663,12 +663,47 @@ func TestReadLargeFileStopsAfterRange(t *testing.T) {
 	}
 }
 
-func TestTTYNotOnWindows(t *testing.T) {
+func TestTTYSessionWindows(t *testing.T) {
 	if runtime.GOOS != "windows" {
-		t.Skip("terminal sessions are tested in tty_test.go")
+		t.Skip("Unix terminal sessions are tested in tty_test.go")
 	}
 	h := newHarness(t, config.ModeFull, nil)
-	h.fail("run_command", map[string]any{"command": "cmd", "tty": true}, "not supported on Windows")
+	out := h.ok("run_command", map[string]any{"command": "cmd", "tty": true, "timeout_sec": 60, "wait_sec": 10})
+	t.Cleanup(func() { h.call("kill_job", map[string]any{"job_id": "job-1"}) })
+	if !strings.Contains(out, "running in a terminal") || !strings.Contains(out, ">") {
+		t.Fatalf("expected a cmd prompt in a pseudo-console: %s", out)
+	}
+	stdin := func(input string) string {
+		t.Helper()
+		return h.ok("write_stdin", map[string]any{"job_id": "job-1", "input": input})
+	}
+	if out := stdin("set /a 40+2\n"); !strings.Contains(out, "42") || strings.Contains(out, "\x1b") {
+		t.Errorf("command output: %q", out)
+	}
+	if out := stdin("set /p NAME=name? \n"); !strings.Contains(out, "name?") {
+		t.Errorf("prompt: %q", out)
+	}
+	stdin("bob\n")
+	if out := stdin("echo hello-%NAME%\n"); !strings.Contains(out, "hello-bob") {
+		t.Errorf("answer to the prompt: %q", out)
+	}
+
+	// Ctrl-C stops the running command, not cmd itself.
+	h.ok("write_stdin", map[string]any{"job_id": "job-1", "input": "ping -n 30 127.0.0.1\n", "wait_sec": 2})
+	start := time.Now()
+	stdin("\u0003")
+	if out := stdin("echo after-interrupt\n"); !strings.Contains(out, "after-interrupt") || time.Since(start) > 10*time.Second {
+		t.Errorf("Ctrl-C did not interrupt ping: %q", out)
+	}
+
+	out = h.ok("write_stdin", map[string]any{"job_id": "job-1", "input": "exit\n", "wait_sec": 5})
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(out, "state: exited") && time.Now().Before(deadline) {
+		out = h.ok("write_stdin", map[string]any{"job_id": "job-1", "wait_sec": 1})
+	}
+	if !strings.Contains(out, "state: exited") {
+		t.Errorf("cmd should have exited: %s", out)
+	}
 }
 
 func TestReadManyFiles(t *testing.T) {

@@ -265,7 +265,7 @@ func (d *Deps) launch(ctx context.Context, req *mcp.CallToolRequest, o jobs.Star
 		fmt.Fprintf(&b, "Call get_job_output with job_id=%q and offset=%d to wait for more output, or kill_job to stop it.\n", info.ID, next)
 	}
 	fmt.Fprintf(&b, "duration: %s\n", time.Since(info.Started).Round(time.Millisecond))
-	writeOutput(&b, data, dropped, info.TTY)
+	writeOutput(&b, data, dropped)
 	return b.String(), nil
 }
 
@@ -310,7 +310,7 @@ func (d *Deps) writeStdin(ctx context.Context, req *mcp.CallToolRequest, in writ
 		b.WriteString("(no new output)\n")
 		return b.String(), nil
 	}
-	writeOutput(&b, data, dropped, info.TTY)
+	writeOutput(&b, data, dropped)
 	if next < info.OutputBytes {
 		b.WriteString("(more output follows: call write_stdin with empty input to read it)\n")
 	}
@@ -337,7 +337,7 @@ func (d *Deps) jobOutput(ctx context.Context, req *mcp.CallToolRequest, in jobOu
 		b.WriteString("(no new output)\n")
 		return b.String(), nil
 	}
-	writeOutput(&b, data, dropped, info.TTY)
+	writeOutput(&b, data, dropped)
 	return b.String(), nil
 }
 
@@ -361,12 +361,8 @@ func progressReporter(ctx context.Context, req *mcp.CallToolRequest, j *jobs.Job
 	}
 }
 
-// writeOutput appends a job's output; terminal output is turned into plain
-// text first.
-func writeOutput(b *strings.Builder, data []byte, dropped int64, tty bool) {
-	if tty {
-		data = output.StripTerminal(data)
-	}
+// writeOutput appends a job's output (for terminal jobs already plain text).
+func writeOutput(b *strings.Builder, data []byte, dropped int64) {
 	if dropped > 0 {
 		fmt.Fprintf(b, "(%d earlier bytes of output were discarded)\n", dropped)
 	}

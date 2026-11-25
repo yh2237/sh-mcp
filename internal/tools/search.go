@@ -71,9 +71,10 @@ func (d *Deps) search(ctx context.Context, req *mcp.CallToolRequest, in searchIn
 		return "", fmt.Errorf("pattern or glob is required")
 	}
 	maxResults := in.MaxResults
-	if maxResults <= 0 || maxResults > maxSearchResults {
+	if maxResults <= 0 {
 		maxResults = defaultSearchResults
 	}
+	maxResults = min(maxResults, maxSearchResults)
 	ctxLines := min(max(in.ContextLines, 0), 10)
 	gitignore := true
 	if in.RespectGitignore != nil {

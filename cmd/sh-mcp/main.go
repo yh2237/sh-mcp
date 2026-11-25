@@ -14,6 +14,7 @@ import (
 
 	"github.com/yh2237/sh-mcp/internal/config"
 	"github.com/yh2237/sh-mcp/internal/server"
+	"github.com/yh2237/sh-mcp/internal/update"
 )
 
 var version = "dev"
@@ -45,6 +46,11 @@ func run() error {
 	if cfg.ShowVersion {
 		fmt.Println("sh-mcp", version)
 		return nil
+	}
+	if cfg.Update {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		return update.Run(ctx, update.Options{Current: version, Out: os.Stdout})
 	}
 	if cfg.GenToken {
 		// 26 base32 characters, 128 bits of entropy.

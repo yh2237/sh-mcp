@@ -56,6 +56,7 @@ type Config struct {
 	AuditLog    string
 	ShowVersion bool
 	GenToken    bool
+	Update      bool
 }
 
 // MCPServer is a stdio MCP server the owner lets the agent use through
@@ -124,6 +125,7 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 	b.str(&c.AuditLog, "audit-log", "JSONL audit log file (default: stderr)")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")
 	fs.BoolVar(&c.GenToken, "gen-token", false, "print a new random auth token and exit")
+	fs.BoolVar(&c.Update, "update", false, "replace this binary with the latest release (checked against its SHA256SUMS) and exit")
 
 	if err := errors.Join(b.errs...); err != nil {
 		return nil, err
@@ -134,7 +136,7 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 	if fs.NArg() > 0 {
 		return nil, fmt.Errorf("unexpected arguments: %v", fs.Args())
 	}
-	if c.ShowVersion || c.GenToken {
+	if c.ShowVersion || c.GenToken || c.Update {
 		return c, nil
 	}
 

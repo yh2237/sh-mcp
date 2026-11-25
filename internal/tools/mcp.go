@@ -227,15 +227,29 @@ func downstreamReadOnly(ctx context.Context, cs *mcp.ClientSession, tool string)
 
 // relayContent passes the downstream content through, capping text so one
 // call cannot flood the context, and rendering structured-only results.
+// Adjacent text items are merged into one so clients that only show the last
+// text item (such as Gemini) do not lose earlier items.
 func relayContent(res *mcp.CallToolResult) []mcp.Content {
 	var out []mcp.Content
+	var text strings.Builder
+	flush := func() {
+		if text.Len() > 0 {
+			out = append(out, &mcp.TextContent{Text: string(output.TruncateMiddle([]byte(text.String()), maxResultBytes))})
+			text.Reset()
+		}
+	}
 	for _, c := range res.Content {
 		if t, ok := c.(*mcp.TextContent); ok {
-			out = append(out, &mcp.TextContent{Text: string(output.TruncateMiddle([]byte(t.Text), maxResultBytes))})
+			if text.Len() > 0 {
+				text.WriteString("\n\n")
+			}
+			text.WriteString(t.Text)
 			continue
 		}
+		flush()
 		out = append(out, c)
 	}
+	flush()
 	if len(out) == 0 && res.StructuredContent != nil {
 		data, _ := json.Marshal(res.StructuredContent)
 		out = append(out, &mcp.TextContent{Text: string(output.TruncateMiddle(data, maxResultBytes))})

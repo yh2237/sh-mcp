@@ -9,6 +9,8 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	"github.com/modelcontextprotocol/go-sdk/mcp"
+
 	"github.com/yh2237/sh-mcp/internal/config"
 	"github.com/yh2237/sh-mcp/internal/security"
 )
@@ -53,5 +55,30 @@ func TestSearchMaxResultsClampsToUpperLimit(t *testing.T) {
 	}
 	if !strings.Contains(out, "250 results in 1 files") {
 		t.Fatalf("expected all 250 results when max_results exceeds upper limit, got:\n%s", out)
+	}
+}
+
+func TestRelayContentMergesAdjacentText(t *testing.T) {
+	res := &mcp.CallToolResult{
+		Content: []mcp.Content{
+			&mcp.TextContent{Text: "first"},
+			&mcp.TextContent{Text: "second"},
+			&mcp.ImageContent{Data: []byte("img"), MIMEType: "image/png"},
+			&mcp.TextContent{Text: "third"},
+			&mcp.TextContent{Text: "fourth"},
+		},
+	}
+	got := relayContent(res)
+	if len(got) != 3 {
+		t.Fatalf("got %d content items, want 3", len(got))
+	}
+	if t0, ok := got[0].(*mcp.TextContent); !ok || t0.Text != "first\n\nsecond" {
+		t.Fatalf("item[0] = %#v, want merged first+second", got[0])
+	}
+	if _, ok := got[1].(*mcp.ImageContent); !ok {
+		t.Fatalf("item[1] = %#v, want ImageContent", got[1])
+	}
+	if t2, ok := got[2].(*mcp.TextContent); !ok || t2.Text != "third\n\nfourth" {
+		t.Fatalf("item[2] = %#v, want merged third+fourth", got[2])
 	}
 }

@@ -5,8 +5,10 @@ Linux サーバーで sh-mcp を常駐させ、[Cloudflare Tunnel](https://devel
 ## 1. 配置
 
 ```bash
-sudo install -m 0755 sh-mcp-linux-amd64 /usr/local/bin/sh-mcp
+curl -fsSL https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.sh | sh
 ```
+
+`~/.local/bin/sh-mcp` に入ります。
 
 ## 2. 常駐させる
 
@@ -34,7 +36,7 @@ Wants=network-online.target
 User=you
 EnvironmentFile=/etc/sh-mcp/env
 Environment=PATH=/home/you/go/bin:/home/you/.local/bin:/usr/local/bin:/usr/bin:/bin
-ExecStart=/usr/local/bin/sh-mcp
+ExecStart=/home/you/.local/bin/sh-mcp
 ExecReload=/bin/kill -HUP $MAINPID
 LogsDirectory=sh-mcp
 Restart=on-failure
@@ -79,7 +81,7 @@ claude mcp add --transport http sh-mcp https://mcp.yourdomain.example/mcp \
 {
   "mcpServers": {
     "sh-mcp": {
-      "command": "/usr/local/bin/sh-mcp",
+      "command": "/home/you/.local/bin/sh-mcp",
       "args": ["--mode", "full", "--allow-dir", "/home/you/projects"]
     }
   }

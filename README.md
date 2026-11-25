@@ -16,11 +16,20 @@ Go製のシングルバイナリで、ローカル（`stdio`）とリモート�
 
 ## インストール
 
-[GitHub Releases](https://github.com/yh2237/sh-mcp/releases) からバイナリを取得して配置します。
+[GitHub Releases](https://github.com/yh2237/sh-mcp/releases) からバイナリを取得して実行権限付けるだけです。
+
+以下でも `~/.local/bin`（Windows は `%LOCALAPPDATA%\Programs\sh-mcp`）にインストールできます。
+
+Linux / macOS:
 
 ```bash
-chmod +x sh-mcp-linux-amd64
-sudo mv sh-mcp-linux-amd64 /usr/local/bin/sh-mcp
+curl -fsSL https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.sh | sh
+```
+
+Windows（PowerShell）:
+
+```powershell
+irm https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.ps1 | iex
 ```
 
 ソースからビルドする場合（Go 1.26 以上）:

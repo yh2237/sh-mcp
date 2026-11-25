@@ -10,7 +10,7 @@
 | :--- | :--- | :--- | :--- |
 | `--mode` | `SH_MCP_MODE` | `read` | `read` / `ask` / `full`（[セキュリティ](security.md#2-モードと承認)） |
 | `--allow-dir` | `SH_MCP_ALLOW_DIR` | `stdio`: カレント / `http`: 必須 | アクセスを許可するディレクトリ（複数可）。先頭が相対パスの基準 |
-| `--allow-command` | `SH_MCP_ALLOW_COMMAND` | なし | `ask` で承認なしに実行できるプログラム（複数可、`ask` でのみ指定） |
+| `--auto-approve-command` | `SH_MCP_AUTO_APPROVE_COMMAND` | なし | `ask` で承認なしに実行できるプログラム（複数可、`ask` でのみ指定） |
 | `--deny-glob` | `SH_MCP_DENY_GLOB` | 後述 | ファイル操作ツールから保護する glob（複数可）。先頭 `!` で例外 |
 | `--max-file-bytes` | `SH_MCP_MAX_FILE_BYTES` | 5 MiB | 読み書き・検索するファイルのサイズ上限 |
 | `--shell` | `SH_MCP_SHELL` | Unix: `/bin/sh -c` / Windows: PowerShell | `run_shell` が使うシェル |

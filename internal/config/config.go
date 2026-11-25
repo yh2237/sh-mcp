@@ -42,11 +42,11 @@ type Config struct {
 	AuthToken      string
 	InsecureNoAuth bool
 
-	Mode            string
-	AllowedDirs     []string
-	AllowedCommands []string
-	DenyGlobs       []string
-	MaxFileBytes    int64
+	Mode                string
+	AllowedDirs         []string
+	AutoApproveCommands []string
+	DenyGlobs           []string
+	MaxFileBytes        int64
 	// Shell is the argv prefix used by run_shell; the script is appended as
 	// the last argument.
 	Shell          []string
@@ -109,7 +109,7 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 
 	b.str(&c.Mode, "mode", `what the agent may do: "read" (read files), "ask" (also change files and run commands, each approved by the user) or "full" (anything the user running sh-mcp can do)`)
 	b.list(&c.AllowedDirs, "allow-dir", false, "directory the tools may access (repeatable; required for http, default for stdio: working directory)")
-	b.list(&c.AllowedCommands, "allow-command", false, "program run_command may start without approval in --mode ask (repeatable)")
+	b.list(&c.AutoApproveCommands, "auto-approve-command", false, "program run_command may start without approval in --mode ask (repeatable)")
 	b.list(&c.DenyGlobs, "deny-glob", true, "additional glob of files the file tools must not touch, or with a leading ! files to exempt (repeatable; added to the defaults)")
 	b.int64(&c.MaxFileBytes, "max-file-bytes", "largest file the file tools read, write or search (text and images)")
 	b.fields(&c.Shell, "shell", `shell command line run_shell appends the script to, e.g. "/bin/bash -c" (default: /bin/sh -c, or PowerShell on Windows)`)
@@ -263,8 +263,8 @@ func (c *Config) Finalize() error {
 	default:
 		errs = append(errs, fmt.Errorf("--mode must be %q, %q or %q, got %q", ModeRead, ModeAsk, ModeFull, c.Mode))
 	}
-	if len(c.AllowedCommands) > 0 && c.Mode != ModeAsk {
-		errs = append(errs, errors.New("--allow-command only applies to --mode ask (it lists programs that run without approval)"))
+	if len(c.AutoApproveCommands) > 0 && c.Mode != ModeAsk {
+		errs = append(errs, errors.New("--auto-approve-command only applies to --mode ask (it lists programs that run without approval)"))
 	}
 
 	if len(c.AllowedDirs) == 0 {

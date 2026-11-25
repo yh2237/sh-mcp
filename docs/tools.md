@@ -14,7 +14,7 @@
 | `search_files` | ○ | ○ | ○ | 正規表現で検索、glob でファイル一覧 |
 | `write_file` / `edit_file` | — | △ | ○ | 新規作成・全文上書き / 文字列を置換して diff を返す |
 | `delete_file` / `move_file` | — | △ | ○ | 削除 / 移動・名前変更 |
-| `run_command` | — | △（`--allow-command` は ○） | ○ | シェルを介さずコマンド実行 |
+| `run_command` | — | △（`--auto-approve-command` は ○） | ○ | シェルを介さずコマンド実行 |
 | `run_shell` | — | △ | ○ | シェルスクリプト実行 |
 | `get_job_output` / `kill_job` / `list_jobs` | — | ○ | ○ | バックグラウンドジョブの操作 |
 | `list_mcp_servers` / `list_mcp_tools` | ※ | ○ | ○ | 中継先 MCP サーバーの一覧（※ `--mcp-server` 指定時） |

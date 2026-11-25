@@ -58,7 +58,7 @@ export SH_MCP_AUTH_TOKEN="$(sh-mcp --gen-token)"
 sh-mcp \
   --mode ask \
   --allow-dir /home/user/projects \
-  --allow-command df \
+  --auto-approve-command df \
   --public-url https://mcp.yourdomain.example
 ```
 
@@ -69,7 +69,7 @@ sh-mcp \
 | モード | ファイル読み取り | ファイル変更 | コマンド実行 |
 | :--- | :---: | :--- | :--- |
 | `read`（既定） | 可 | 不可 | 不可 |
-| `ask` | 可 | 毎回承認 | 毎回承認（`--allow-command` のプログラムは承認なし） |
+| `ask` | 可 | 毎回承認 | 毎回承認（`--auto-approve-command` のプログラムは承認なし） |
 | `full` | 可 | 自由 | 自由 |
 
 承認は、クライアントが対応していれば sh-mcp が確認を出し、対応していなければクライアント自身の確認画面に任せます（Gemini アプリでは操作ごとに許可カードが出ます）。詳しくは[セキュリティ](docs/security.md)を見てください。

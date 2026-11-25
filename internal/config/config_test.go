@@ -72,9 +72,9 @@ func TestFlagsOverrideEnv(t *testing.T) {
 func TestListsFromEnv(t *testing.T) {
 	a, b := t.TempDir(), t.TempDir()
 	c, err := parse(t, []string{"--deny-glob", "**/secrets/**"}, map[string]string{
-		"SH_MCP_MODE":          "ask",
-		"SH_MCP_ALLOW_DIR":     a + ";" + b,
-		"SH_MCP_ALLOW_COMMAND": "df; free ;uptime",
+		"SH_MCP_MODE":                 "ask",
+		"SH_MCP_ALLOW_DIR":            a + ";" + b,
+		"SH_MCP_AUTO_APPROVE_COMMAND": "df; free ;uptime",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -82,8 +82,8 @@ func TestListsFromEnv(t *testing.T) {
 	if !reflect.DeepEqual(c.AllowedDirs, []string{filepath.Clean(a), filepath.Clean(b)}) {
 		t.Errorf("dirs: %v", c.AllowedDirs)
 	}
-	if !reflect.DeepEqual(c.AllowedCommands, []string{"df", "free", "uptime"}) {
-		t.Errorf("commands: %v", c.AllowedCommands)
+	if !reflect.DeepEqual(c.AutoApproveCommands, []string{"df", "free", "uptime"}) {
+		t.Errorf("commands: %v", c.AutoApproveCommands)
 	}
 	deny := strings.Join(c.DenyGlobs, " ")
 	if !strings.Contains(deny, "**/.env") || !strings.Contains(deny, "**/secrets/**") {
@@ -152,7 +152,7 @@ func TestInvalid(t *testing.T) {
 		{nil, map[string]string{"SH_MCP_INSECURE_NO_AUTH": "yes please"}, "SH_MCP_INSECURE_NO_AUTH"},
 		{[]string{"--mode", "admin"}, nil, "--mode"},
 		{[]string{"--mode", "ops"}, nil, "--mode must be"},
-		{[]string{"--mode", "full", "--allow-command", "git"}, nil, "only applies to --mode ask"},
+		{[]string{"--mode", "full", "--auto-approve-command", "git"}, nil, "only applies to --mode ask"},
 		{[]string{"--public-url", "http://mcp.example.com"}, nil, "https"},
 		{[]string{"--public-url", "https://mcp.example.com/sub"}, nil, "no path"},
 		{[]string{"--transport", "http"}, nil, "not defined"},

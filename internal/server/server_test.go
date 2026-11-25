@@ -110,7 +110,7 @@ func TestAskModeApproval(t *testing.T) {
 	for _, version := range []string{"", "2025-11-25"} {
 		t.Run("protocol="+version, func(t *testing.T) {
 			a := &approver{}
-			h := newHarnessWith(t, config.ModeAsk, func(c *config.Config) { c.AllowedCommands = []string{"go"} },
+			h := newHarnessWith(t, config.ModeAsk, func(c *config.Config) { c.AutoApproveCommands = []string{"go"} },
 				a.options(), &mcp.ClientSessionOptions{ProtocolVersion: version})
 
 			a.set(false)
@@ -136,7 +136,7 @@ func TestAskModeApproval(t *testing.T) {
 			h.ok("read_file", map[string]any{"path": "x.txt"})
 			h.ok("run_command", map[string]any{"command": "go", "args": []string{"version"}})
 			if asked := a.asked(); len(asked) != 0 {
-				t.Errorf("reads and --allow-command programs need no approval: %q", asked)
+				t.Errorf("reads and --auto-approve-command programs need no approval: %q", asked)
 			}
 			h.fail("run_shell", map[string]any{"script": "echo hi"}, "did not approve")
 			if asked := a.asked(); len(asked) != 1 || !strings.Contains(asked[0], "echo hi") {

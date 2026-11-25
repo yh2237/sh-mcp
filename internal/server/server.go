@@ -40,9 +40,9 @@ type Server struct {
 }
 
 func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) {
-	cmd, missing := security.NewCommandPolicy(cfg.AllowedCommands, cfg.EnvPassthrough, []string{config.TokenEnv})
+	cmd, missing := security.NewCommandPolicy(cfg.AutoApproveCommands, cfg.EnvPassthrough, []string{config.TokenEnv})
 	if len(missing) > 0 {
-		log.Warn("--allow-command programs not found on PATH; they will need approval", "commands", missing)
+		log.Warn("--auto-approve-command programs not found on PATH; they will need approval", "commands", missing)
 	}
 	var oa *oauth.Server
 	if cfg.Transport == config.TransportHTTP && cfg.PublicURL != nil && cfg.AuthToken != "" {

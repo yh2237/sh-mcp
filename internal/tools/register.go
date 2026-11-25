@@ -15,12 +15,14 @@ import (
 )
 
 type Deps struct {
-	Cfg   *config.Config
-	Guard *security.Guard
-	Cmd   *security.CommandPolicy
-	Jobs  *jobs.Manager
-	Proxy *proxy.Manager
-	Audit *audit.Logger
+	Cfg       *config.Config
+	Guard     *security.Guard
+	Cmd       *security.CommandPolicy
+	Jobs      *jobs.Manager
+	Proxy     *proxy.Manager
+	Audit     *audit.Logger
+	approvals approvalStore
+
 	// Git is the absolute path of git, or "" when it is not installed (the
 	// git tools are then not offered).
 	Git string

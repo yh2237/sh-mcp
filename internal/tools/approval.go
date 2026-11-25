@@ -1,10 +1,17 @@
 package tools
 
 import (
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"strings"
+	"sync"
+	"time"
+
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -13,7 +20,53 @@ import (
 
 const approvalInputID = "approval"
 
-const maxApprovalMessage = 4 << 10
+const (
+	maxApprovalMessage = 4 << 10
+	// approvalTTL bounds how long the user can take to answer.
+	approvalTTL = 15 * time.Minute
+)
+
+// approvalStore remembers the approval requests sh-mcp has sent. An answer is
+// only accepted for a request that was really issued, for the same action,
+// and only once: a client cannot approve by sending an answer nobody asked
+// for, or reuse an old approval for a second identical call.
+type approvalStore struct {
+	mu      sync.Mutex
+	pending map[string]time.Time // request state -> expiry
+}
+
+// issue registers a new request for the action digest and returns its state.
+func (s *approvalStore) issue(action string) string {
+	var nonce [16]byte
+	_, _ = rand.Read(nonce[:])
+	state := action + "." + hex.EncodeToString(nonce[:])
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.pending == nil {
+		s.pending = map[string]time.Time{}
+	}
+	now := time.Now()
+	for k, exp := range s.pending {
+		if now.After(exp) {
+			delete(s.pending, k)
+		}
+	}
+	s.pending[state] = now.Add(approvalTTL)
+	return state
+}
+
+// consume reports whether state is an outstanding request for action, and
+// forgets it.
+func (s *approvalStore) consume(state, action string) bool {
+	if !strings.HasPrefix(state, action+".") {
+		return false
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	exp, ok := s.pending[state]
+	delete(s.pending, state)
+	return ok && time.Now().Before(exp)
+}
 
 // errNeedsApproval is returned by a handler to ask the user before going on.
 // addContentTool turns it into an input-required result; the SDK then asks
@@ -48,26 +101,39 @@ func approvalBySession(req *mcp.CallToolRequest) bool {
 
 // approve returns nil when the call may go ahead, errDeclined when the user
 // refused, or *errNeedsApproval when the user has to be asked first. message
-// describes what will happen. A retry is only accepted with the same
-// arguments and the same message (which also covers state the handler read,
-// such as the diff of an edit), so the user never approves something other
-// than what runs.
+// describes what will happen. An answer is only accepted for a request
+// sh-mcp issued for the same arguments and message (which also covers state
+// the handler read, such as the diff of an edit), so the user never approves
+// something other than what runs; anything else is asked again.
 func (d *Deps) approve(req *mcp.CallToolRequest, message string) error {
 	if !d.needsApproval() || !approvalBySession(req) {
 		return nil
 	}
-	state := approvalState(req.Params.Name, req.Params.Arguments, message)
-	if res, ok := req.Params.InputResponses[approvalInputID].(*mcp.ElicitResult); ok && req.Params.RequestState == state {
+	action := approvalState(req.Params.Name, req.Params.Arguments, message)
+	if res, ok := req.Params.InputResponses[approvalInputID].(*mcp.ElicitResult); ok && d.approvals.consume(req.Params.RequestState, action) {
 		if res.Action == "accept" {
 			return nil
 		}
 		return errDeclined
 	}
-	return &errNeedsApproval{state: state, params: &mcp.ElicitParams{
+	return &errNeedsApproval{state: d.approvals.issue(action), params: &mcp.ElicitParams{
 		Mode:            "form",
-		Message:         truncate(message, maxApprovalMessage),
+		Message:         approvalMessage(message),
 		RequestedSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 	}}
+}
+
+// approvalMessage shortens a long message for the prompt and says so, so a
+// cut-off script or file is not mistaken for the whole of it.
+func approvalMessage(message string) string {
+	if len(message) <= maxApprovalMessage {
+		return message
+	}
+	cut := maxApprovalMessage
+	for cut > 0 && !utf8.RuneStart(message[cut]) {
+		cut--
+	}
+	return message[:cut] + fmt.Sprintf("\n[... %d more bytes not shown]", len(message)-cut)
 }
 
 // approvalState digests the call. Arguments are re-encoded first so that a

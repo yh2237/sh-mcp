@@ -102,7 +102,7 @@ func registerExec(s *mcp.Server, d *Deps) {
 					msg += "\n(in a terminal; later input is approved separately)"
 				}
 				if in.Stdin != "" {
-					msg += "\nstdin: " + truncate(in.Stdin, 500)
+					msg += "\n--- stdin ---\n" + in.Stdin
 				}
 				if err := d.approve(req, msg); err != nil {
 					return "", err
@@ -136,6 +136,9 @@ func registerExec(s *mcp.Server, d *Deps) {
 			return "", err
 		}
 		msg := fmt.Sprintf("Run this script with %s?\ncwd: %s\n---\n%s", d.Cfg.Shell[0], dir, in.Script)
+		if in.Stdin != "" {
+			msg += "\n--- stdin ---\n" + in.Stdin
+		}
 		if err := d.approve(req, msg); err != nil {
 			return "", err
 		}

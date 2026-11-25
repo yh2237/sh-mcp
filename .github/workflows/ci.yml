@@ -5,6 +5,10 @@ on:
     branches: ["**"]
   pull_request:
   workflow_call:
+  # Weekly, so newly published vulnerabilities (govulncheck) and toolchain
+  # changes surface even when nothing is pushed.
+  schedule:
+    - cron: "0 0 * * 1"
 
 permissions:
   contents: read

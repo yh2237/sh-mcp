@@ -96,6 +96,7 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 		"transport", cfg.Transport,
 		"mode", cfg.Mode,
 		"allowed_dirs", guard.Dirs(),
+		"deny_globs", cfg.DenyGlobs,
 		"oauth", oa != nil,
 		"tools", tools.ToolNames(cfg, gitPath != ""),
 	)

@@ -100,7 +100,9 @@ func (d *Deps) search(ctx context.Context, _ *mcp.CallToolRequest, in searchInpu
 
 	s := &searcher{d: d, re: re, ctxLines: ctxLines, max: maxResults, rootDir: r.RootDir, base: base}
 	if !info.IsDir() {
-		s.searchFile(fsys, base, path.Base(base))
+		if in.Glob == "" || matchSearchGlob(in.Glob, path.Base(base)) {
+			s.searchFile(fsys, base, path.Base(base))
+		}
 		return s.result(r.Abs), nil
 	}
 
@@ -189,11 +191,17 @@ func (s *searcher) searchFile(fsys fs.FS, p, rel string) {
 		return
 	}
 	info, err := fs.Stat(fsys, p)
-	if err != nil || info.Size() > s.d.Cfg.MaxFileBytes {
+	if err != nil || !info.Mode().IsRegular() || info.Size() > s.d.Cfg.MaxFileBytes {
 		s.skipped++
 		return
 	}
-	data, err := fs.ReadFile(fsys, p)
+	f, err := fsys.Open(p)
+	if err != nil {
+		s.skipped++
+		return
+	}
+	data, err := readLimit(f, p, s.d.Cfg.MaxFileBytes)
+	f.Close()
 	if err != nil {
 		s.skipped++
 		return
@@ -202,6 +210,10 @@ func (s *searcher) searchFile(fsys fs.FS, p, rel string) {
 		return
 	}
 	lines := strings.Split(strings.ToValidUTF8(string(data), "�"), "\n")
+	for i, line := range lines {
+		// Match CRLF files line by line like LF ones ("^ready$").
+		lines[i] = strings.TrimSuffix(line, "\r")
+	}
 	lastPrinted := -1
 	matchedFile := false
 	for i, line := range lines {
@@ -239,7 +251,6 @@ func (s *searcher) searchFile(fsys fs.FS, p, rel string) {
 }
 
 func (s *searcher) printLine(rel string, idx int, sep byte, text string) {
-	text = strings.TrimRight(text, "\r")
 	text = truncate(text, searchLineChars)
 	fmt.Fprintf(&s.out, "%s%c%d%c%s\n", rel, sep, idx+1, sep, text)
 }

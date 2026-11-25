@@ -56,9 +56,44 @@ func registerRead(s *mcp.Server, d *Deps) {
 	}, d.listDir)
 }
 
-func (d *Deps) readFile(_ context.Context, _ *mcp.CallToolRequest, in readFileInput) ([]mcp.Content, error) {
+// checkRegular rejects directories and special files. It must run before a
+// file is opened: opening a FIFO with no writer blocks indefinitely.
+func checkRegular(abs string, info fs.FileInfo) error {
+	switch {
+	case info.IsDir():
+		return fmt.Errorf("%s is a directory", abs)
+	case !info.Mode().IsRegular():
+		return fmt.Errorf("%s is not a regular file", abs)
+	}
+	return nil
+}
+
+// readLimit reads r to the end, failing if it holds more than limit bytes
+// (a file can grow after its size was checked).
+func readLimit(r io.Reader, abs string, limit int64) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(r, limit+1))
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(data)) > limit {
+		return nil, fmt.Errorf("%s is larger than %d bytes (--max-file-bytes)", abs, limit)
+	}
+	return data, nil
+}
+
+func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFileInput) ([]mcp.Content, error) {
 	r, err := d.Guard.Resolve(in.Path)
 	if err != nil {
+		return nil, err
+	}
+	info, err := r.Root.Stat(r.Rel)
+	if err != nil {
+		return nil, err
+	}
+	if info.IsDir() {
+		return nil, fmt.Errorf("%s is a directory; use list_dir", r.Abs)
+	}
+	if err := checkRegular(r.Abs, info); err != nil {
 		return nil, err
 	}
 	f, err := r.Root.Open(r.Rel)
@@ -66,13 +101,6 @@ func (d *Deps) readFile(_ context.Context, _ *mcp.CallToolRequest, in readFileIn
 		return nil, err
 	}
 	defer f.Close()
-	info, err := f.Stat()
-	if err != nil {
-		return nil, err
-	}
-	if info.IsDir() {
-		return nil, fmt.Errorf("%s is a directory; use list_dir", r.Abs)
-	}
 
 	br := bufio.NewReaderSize(f, 64<<10)
 	head, _ := br.Peek(binarySniffBytes)
@@ -80,7 +108,7 @@ func (d *Deps) readFile(_ context.Context, _ *mcp.CallToolRequest, in readFileIn
 		if info.Size() > d.Cfg.MaxFileBytes {
 			return nil, fmt.Errorf("%s is a %d byte image; the limit is %d (--max-file-bytes)", r.Abs, info.Size(), d.Cfg.MaxFileBytes)
 		}
-		data, err := io.ReadAll(br)
+		data, err := readLimit(br, r.Abs, d.Cfg.MaxFileBytes)
 		if err != nil {
 			return nil, err
 		}
@@ -105,19 +133,29 @@ func (d *Deps) readFile(_ context.Context, _ *mcp.CallToolRequest, in readFileIn
 		end = start + defaultReadLines - 1
 	}
 
+	// The total line count is reported for files up to --max-file-bytes; for
+	// larger ones (logs) reading stops after the requested range.
+	countAll := info.Size() <= d.Cfg.MaxFileBytes
 	var out strings.Builder
 	maxOut := maxReadOutput
 	lineNo, lastShown := 0, 0
-	outputFull := false
+	outputFull, eof := false, false
 	for {
+		if lineNo%4096 == 0 && ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		line, err := readLine(br, maxLineChars)
 		if err == io.EOF && line == nil {
+			eof = true
 			break
 		}
 		if err != nil && err != io.EOF {
 			return nil, err
 		}
 		lineNo++
+		if lineNo > end && !countAll {
+			break // this line shows that more follow
+		}
 		if lineNo >= start && lineNo <= end && !outputFull {
 			s := strings.ToValidUTF8(string(line), "�")
 			if out.Len()+len(s) > maxOut {
@@ -128,10 +166,14 @@ func (d *Deps) readFile(_ context.Context, _ *mcp.CallToolRequest, in readFileIn
 			}
 		}
 		if err == io.EOF {
+			eof = true
 			break
 		}
 	}
 	shown := fmt.Sprintf("lines %d-%d of %d", start, lastShown, lineNo)
+	if !eof {
+		shown = fmt.Sprintf("lines %d-%d (total not counted: file is larger than %d bytes)", start, lastShown, d.Cfg.MaxFileBytes)
+	}
 	switch {
 	case lineNo == 0:
 		out.WriteString("(empty file)\n")

@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
+
+	"github.com/yh2237/sh-mcp/internal/security"
 )
 
 const utf8BOM = "\xEF\xBB\xBF"
@@ -133,13 +135,18 @@ func (d *Deps) editFile(_ context.Context, req *mcp.CallToolRequest, in editFile
 	if err != nil {
 		return "", err
 	}
-	if info.IsDir() {
-		return "", fmt.Errorf("%s is a directory", r.Abs)
+	if err := checkRegular(r.Abs, info); err != nil {
+		return "", err
 	}
 	if info.Size() > d.Cfg.MaxFileBytes {
 		return "", fmt.Errorf("%s is %d bytes; limit is %d (--max-file-bytes)", r.Abs, info.Size(), d.Cfg.MaxFileBytes)
 	}
-	raw, err := r.Root.ReadFile(r.Rel)
+	f, err := r.Root.Open(r.Rel)
+	if err != nil {
+		return "", err
+	}
+	raw, err := readLimit(f, r.Abs, d.Cfg.MaxFileBytes)
+	f.Close()
 	if err != nil {
 		return "", err
 	}
@@ -226,23 +233,9 @@ func (d *Deps) deleteFile(_ context.Context, req *mcp.CallToolRequest, in delete
 		return "deleted empty directory " + r.Abs, nil
 	}
 	// A recursive delete must not remove files the file tools may not touch.
-	count := 0
-	var denied []string
-	err = fs.WalkDir(r.Root.FS(), filepath.ToSlash(r.Rel), func(p string, e fs.DirEntry, err error) error {
-		if err != nil {
-			return err
-		}
-		count++
-		if d.isDeniedEntry(filepath.Join(r.RootDir, filepath.FromSlash(p)), e) {
-			denied = append(denied, p)
-		}
-		return nil
-	})
+	count, err := d.checkTreeUnprotected(r, "delete them yourself or leave the directory")
 	if err != nil {
 		return "", err
-	}
-	if len(denied) > 0 {
-		return "", fmt.Errorf("%s contains files protected by --deny-glob (%s); delete them yourself or leave the directory", r.Abs, strings.Join(denied[:min(len(denied), 5)], ", "))
 	}
 	if err := d.approve(req, fmt.Sprintf("Delete the directory %s and everything in it (%d entries)?", r.Abs, count)); err != nil {
 		return "", err
@@ -268,8 +261,16 @@ func (d *Deps) moveFile(_ context.Context, req *mcp.CallToolRequest, in moveFile
 	if src.RootDir != dst.RootDir {
 		return "", fmt.Errorf("cannot move between allowed directories (%s -> %s); copy with write_file instead", src.RootDir, dst.RootDir)
 	}
-	if _, err := src.Root.Lstat(src.Rel); err != nil {
+	sfi, err := src.Root.Lstat(src.Rel)
+	if err != nil {
 		return "", err
+	}
+	if sfi.IsDir() {
+		// Moving a directory would carry protected files to a path that a
+		// location-specific --deny-glob no longer covers.
+		if _, err := d.checkTreeUnprotected(src, "move them yourself or leave the directory"); err != nil {
+			return "", err
+		}
 	}
 	if fi, err := dst.Root.Lstat(dst.Rel); err == nil {
 		if !in.Overwrite {
@@ -289,6 +290,30 @@ func (d *Deps) moveFile(_ context.Context, req *mcp.CallToolRequest, in moveFile
 		return "", err
 	}
 	return fmt.Sprintf("moved %s -> %s", src.Abs, dst.Abs), nil
+}
+
+// checkTreeUnprotected fails if anything under the directory r is protected
+// by --deny-glob, and otherwise returns how many entries the tree has.
+func (d *Deps) checkTreeUnprotected(r *security.Resolved, hint string) (int, error) {
+	count := 0
+	var denied []string
+	err := fs.WalkDir(r.Root.FS(), filepath.ToSlash(r.Rel), func(p string, e fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		count++
+		if d.isDeniedEntry(filepath.Join(r.RootDir, filepath.FromSlash(p)), e) {
+			denied = append(denied, p)
+		}
+		return nil
+	})
+	if err != nil {
+		return 0, err
+	}
+	if len(denied) > 0 {
+		return 0, fmt.Errorf("%s contains files protected by --deny-glob (%s); %s", r.Abs, strings.Join(denied[:min(len(denied), 5)], ", "), hint)
+	}
+	return count, nil
 }
 
 // atomicWrite replaces rel with data via a temporary file in the same

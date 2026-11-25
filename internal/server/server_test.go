@@ -3,6 +3,7 @@ package server
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"image"
 	"image/png"
 	"io"
@@ -579,5 +580,58 @@ func TestBackgroundJobs(t *testing.T) {
 	out = h.ok("get_job_output", map[string]any{"job_id": "job-2", "wait_sec": 10})
 	if !strings.Contains(out, "state: timed_out") {
 		t.Errorf("job timeout: %s", out)
+	}
+}
+
+func TestMoveRefusesProtectedTree(t *testing.T) {
+	h := newHarness(t, config.ModeFull, func(c *config.Config) { c.DenyGlobs = append(c.DenyGlobs, "**/private/**") })
+	if err := os.MkdirAll(filepath.Join(h.dir, "private", "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.dir, "private", "sub", "notes.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(h.dir, "box", "private"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(h.dir, "box", "private", "key.txt"), []byte("secret"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h.fail("move_file", map[string]any{"source": "box", "destination": "public"}, "protected by --deny-glob")
+	if _, err := os.Stat(filepath.Join(h.dir, "box", "private", "key.txt")); err != nil {
+		t.Errorf("refused move changed the tree: %v", err)
+	}
+	h.ok("write_file", map[string]any{"path": "plain/a.txt", "content": "a", "create_dirs": true})
+	h.ok("move_file", map[string]any{"source": "plain", "destination": "moved"})
+}
+
+func TestSearchCRLFAndFileGlob(t *testing.T) {
+	h := newHarness(t, config.ModeRead, nil)
+	if err := os.WriteFile(filepath.Join(h.dir, "log.txt"), []byte("start\r\nready\r\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if out := h.ok("search_files", map[string]any{"pattern": "^ready$"}); !strings.Contains(out, "log.txt:2:ready") {
+		t.Errorf("CRLF line should match ^ready$: %s", out)
+	}
+	if out := h.ok("search_files", map[string]any{"pattern": "ready", "path": "log.txt", "glob": "*.go"}); !strings.Contains(out, "(no matches)") {
+		t.Errorf("glob should also filter a single file: %s", out)
+	}
+}
+
+func TestReadLargeFileStopsAfterRange(t *testing.T) {
+	h := newHarness(t, config.ModeRead, func(c *config.Config) { c.MaxFileBytes = 100 })
+	var b strings.Builder
+	for i := 1; i <= 200; i++ {
+		fmt.Fprintf(&b, "line %d\n", i)
+	}
+	if err := os.WriteFile(filepath.Join(h.dir, "big.log"), []byte(b.String()), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out := h.ok("read_file", map[string]any{"path": "big.log", "end_line": 3})
+	if !strings.Contains(out, "line 3") || strings.Contains(out, "line 4\n") || !strings.Contains(out, "total not counted") || !strings.Contains(out, "start_line=4") {
+		t.Errorf("large file: %s", out)
+	}
+	if out := h.ok("read_file", map[string]any{"path": "big.log", "start_line": 199}); !strings.Contains(out, "lines 199-200 of 200") {
+		t.Errorf("reading to the end counts the lines: %s", out)
 	}
 }

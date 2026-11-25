@@ -7,6 +7,7 @@
 package proc
 
 import (
+	"os"
 	"os/exec"
 	"sync"
 	"time"
@@ -17,8 +18,8 @@ import (
 const WaitDelay = 3 * time.Second
 
 type Tree struct {
-	cmd    *exec.Cmd
 	mu     sync.Mutex
+	p      *os.Process
 	plat   platformTree
 	closed bool
 }
@@ -26,7 +27,7 @@ type Tree struct {
 // Start starts cmd in a new process tree. cmd.Cancel is set to kill the
 // whole tree, so a CommandContext timeout terminates descendants too.
 func Start(cmd *exec.Cmd) (*Tree, error) {
-	t := &Tree{cmd: cmd}
+	t := &Tree{}
 	prepare(cmd)
 	cmd.Cancel = t.Kill
 	if cmd.WaitDelay == 0 {
@@ -37,33 +38,37 @@ func Start(cmd *exec.Cmd) (*Tree, error) {
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	t.plat = attach(cmd)
+	t.p = cmd.Process
+	t.plat = attach(cmd.Process)
 	return t, nil
 }
+
+// Process is the direct child.
+func (t *Tree) Process() *os.Process { return t.p }
 
 // Kill is safe to call repeatedly and concurrently.
 func (t *Tree) Kill() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.cmd.Process == nil {
+	if t.p == nil {
 		return nil
 	}
-	return killTree(t.cmd, &t.plat)
+	return killTree(t.p, &t.plat)
 }
 
 // Interrupt sends Ctrl-C (SIGINT) to every process in the tree.
 func (t *Tree) Interrupt() error {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	if t.cmd.Process == nil || t.closed {
+	if t.p == nil || t.closed {
 		return nil
 	}
-	return interruptTree(t.cmd, &t.plat)
+	return interruptTree(t.p, &t.plat)
 }
 
 // Close kills any processes still left in the tree (for example background
 // jobs started by a shell script) and releases OS resources. Call it after
-// Wait returns.
+// the direct child has been waited for.
 func (t *Tree) Close() {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -71,6 +76,6 @@ func (t *Tree) Close() {
 		return
 	}
 	t.closed = true
-	_ = killTree(t.cmd, &t.plat)
+	_ = killTree(t.p, &t.plat)
 	release(&t.plat)
 }

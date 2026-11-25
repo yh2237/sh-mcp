@@ -4,6 +4,7 @@ package proc
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 	"syscall"
 )
@@ -21,23 +22,19 @@ func prepare(cmd *exec.Cmd) {
 	}
 }
 
-func interruptTree(cmd *exec.Cmd, _ *platformTree) error {
-	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGINT)
+func attach(*os.Process) platformTree { return platformTree{} }
+
+// The child is the group leader, so its pid is the pgid.
+func signalGroup(p *os.Process, sig syscall.Signal) error {
+	err := syscall.Kill(-p.Pid, sig)
 	if errors.Is(err, syscall.ESRCH) {
 		return nil
 	}
 	return err
 }
 
-func attach(*exec.Cmd) platformTree { return platformTree{} }
+func killTree(p *os.Process, _ *platformTree) error { return signalGroup(p, syscall.SIGKILL) }
 
-func killTree(cmd *exec.Cmd, _ *platformTree) error {
-	// The child is the group leader, so its pid is the pgid.
-	err := syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
-	if errors.Is(err, syscall.ESRCH) {
-		return nil
-	}
-	return err
-}
+func interruptTree(p *os.Process, _ *platformTree) error { return signalGroup(p, syscall.SIGINT) }
 
 func release(*platformTree) {}

@@ -33,7 +33,7 @@ Windows（PowerShell）:
 irm https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.ps1 | iex
 ```
 
-最新版への更新は `sh-mcp --update` です（同じリリースの `SHA256SUMS` で確かめてから置き換えます。動いているサーバーは再起動すると新しい版になります）。
+更新は `sh-mcp --update` です。
 
 ソースからビルドする場合（Go 1.26 以上）:
 

@@ -26,7 +26,7 @@
 | `--auth-token-file` | `SH_MCP_AUTH_TOKEN_FILE` | なし | 認証トークンを読むファイル |
 | `--insecure-no-auth` | `SH_MCP_INSECURE_NO_AUTH` | `false` | 認証なしの HTTP を許可（検証用） |
 | `--audit-log` | `SH_MCP_AUDIT_LOG` | stderr | 監査ログ（JSONL）の出力先 |
-| `--version` / `--gen-token` / `--update` | — | — | バージョン表示 / 認証トークン生成 / 最新リリースへの更新（`SHA256SUMS` で確認、実行ファイルを置き換えて終了） |
+| `--version` / `--gen-token` / `--update` | — | — | バージョン表示 / 認証トークン生成 / 最新リリースへの更新 |
 
 ## 認証トークン
 
@@ -55,6 +55,6 @@ sh-mcp \
 
 * Unix: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LANGUAGE`, `TERM`, `TZ`, `TMPDIR`, `LC_*`, `XDG_*`
 * Windows: `PATH`, `PATHEXT`, `SystemRoot`, `SystemDrive`, `windir`, `COMSPEC`, `TEMP`, `TMP`, `USERPROFILE`, `USERNAME`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramData`, `ProgramFiles`, `ProgramFiles(x86)`, `CommonProgramFiles`, `PROCESSOR_ARCHITECTURE`, `NUMBER_OF_PROCESSORS`, `OS`, `PSModulePath`
-* 共通: `GOPATH`, `GOROOT`, `GOBIN`, `GOCACHE`, `GOMODCACHE`, `GOENV`, `GOFLAGS`, `GOTOOLCHAIN`, `GOPROXY`, `GONOPROXY`, `GOPRIVATE`, `GONOSUMDB`, `GOSUMDB`, `CARGO_HOME`, `RUSTUP_HOME`, `JAVA_HOME`, `NVM_DIR`, `NODE_PATH`, `PYENV_ROOT`, `VIRTUAL_ENV`, `HTTP_PROXY`, `HTTPS_PROXY`, `NO_PROXY`, `ALL_PROXY`（小文字も可）, `SSL_CERT_FILE`, `SSL_CERT_DIR`, `NODE_EXTRA_CA_CERTS`
+* 共通: Go・Rust・Java・Node・Python のツールチェーンの場所（`GOPATH`、`CARGO_HOME`、`JAVA_HOME`、`NVM_DIR`、`VIRTUAL_ENV` など）、プロキシ（`HTTP_PROXY` など）、CA 証明書（`SSL_CERT_FILE` など）
 
 `SSH_AUTH_SOCK` や API キーなどは必要なら `--env-passthrough` で渡します。渡した値は `full` モードではエージェントからも読める点に注意してください。

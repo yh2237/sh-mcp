@@ -53,6 +53,7 @@ WantedBy=multi-user.target
 * **環境変数**: `.bashrc` などは読まれません。基本リストにない変数は `--env-passthrough` で渡します（[設定リファレンス](configuration.md#子プロセスの環境変数)）。
 * **`journalctl`**: 自分のユーザーが `systemd-journal`（または `adm`）グループに入っていないと、他のサービスのログは読めません。
 * **再起動**: 実行中のジョブと中継先の MCP サーバーも止まります。
+* **ログのローテーション**: ローテーションした後は `systemctl reload sh-mcp`（`SIGHUP`）で監査ログを開き直します。
 
 ## 3. Cloudflare Tunnel で公開
 
@@ -75,40 +76,7 @@ claude mcp add --transport http sh-mcp https://mcp.yourdomain.example/mcp \
   --header "Authorization: Bearer $SH_MCP_AUTH_TOKEN"
 ```
 
-### ローカル（`stdio`）
-
-```json
-{
-  "mcpServers": {
-    "sh-mcp": {
-      "command": "/home/you/.local/bin/sh-mcp",
-      "args": ["--mode", "full", "--allow-dir", "/home/you/projects"]
-    }
-  }
-}
-```
-
-## 5. ログローテーション
-
-`/etc/logrotate.d/sh-mcp` の例です。
-
-```text
-/var/log/sh-mcp/audit.jsonl {
-    weekly
-    rotate 8
-    compress
-    missingok
-    notifempty
-    create 0600 you you
-    postrotate
-        systemctl reload sh-mcp >/dev/null 2>&1 || true
-    endscript
-}
-```
-
-## 6. トラブルシューティング
+## 5. トラブルシューティング
 
 * `403 Forbidden: invalid Host header`: プロキシ／Tunnel のホスト名と `--public-url` が一致していません。
 * `--allow-dir is required when serving HTTP`: HTTP では `SH_MCP_ALLOW_DIR` が必須です。
-* コマンドや MCP サーバーが見つからない: 起動時の `PATH` に含まれていません。
-* トークンを全部無効にしたい: `SH_MCP_AUTH_TOKEN` を差し替えて再起動します。

@@ -18,10 +18,10 @@
   * 制限するのはプログラムだけで、引数は制限しません。引数次第で任意のコードを実行できるプログラムは指定しないでください。
   * 例: `git`（`-c core.pager=…` や `--upload-pack` で任意コマンドを実行でき、ファイルも変更できる）、`docker`（実質 root）、シェル、インタプリタ、`find`、`xargs`、`env`、`make`、`go`、`npm`
   * 向いているのは `df`, `free`, `uptime`, `journalctl` のような参照系のプログラムです。
-* git は `--auto-approve-command` ではなく、`git_status` / `git_diff` / `git_log` を使ってください。sh-mcp が引数を固定し、リポジトリの設定からプログラムが動く経路（`core.fsmonitor`、外部 diff、textconv、ページャ）を止めて実行するので、全モードで承認なしに使えます。
+* git は `--auto-approve-command` ではなく、`git_status` / `git_diff` / `git_log` を使ってください。sh-mcp が引数を固定し、リポジトリの設定からプログラムが動く経路（`core.fsmonitor`、外部 diff、textconv、サブモジュールの差分の展開、ページャ）、リポジトリへの書き込み（インデックスの更新）、ネットワークへの接続（partial clone の不足データの取得など）を止めて実行するので、全モードで承認なしに使えます。リビジョンはコミットとして解決できるものだけを受け付けます。
   * ただし、リポジトリの設定（`.git/config`）で定義した clean フィルタ（`filter.<名前>.clean`）は止められません。`read` ではエージェントが `.git/config` を書き換えられないので問題になりませんが、`ask` で `.git/` の中への書き込みを承認するときは注意してください。
 * `full` では、sh-mcp を動かしているユーザーができることは何でもできます。被害の範囲を限りたい場合は、コンテナや VM、systemd のサンドボックスなど、OS 側で sh-mcp を閉じ込めてください。sh-mcp が決めるのはモードと各ツールの動作だけで、OS 側の隔離は利用者の環境に任せます。
-* タイムアウト・`kill_job`・終了時は、子プロセスも含めてまとめて終了します。
+* タイムアウト・`kill_job`・終了時は、子プロセスも含めてまとめて終了します。ただし Unix では、`tty` で起動した対話シェルがジョブ制御で別のプロセスグループに移したプロセス（`&` で起動したバックグラウンドジョブなど）は対象外です。多くは端末が閉じたときの `SIGHUP` で終了しますが、`nohup` などで無視しているものは残ります。
 
 ## 3. HTTP
 
@@ -54,5 +54,6 @@
 {"time":"2026-11-25T09:00:00Z","level":"INFO","msg":"tool_call","event":"tool_call","tool":"write_file","args_summary":{"bytes":128,"path":"main.go","sha256":"a1b2c3d4e5f60708"},"duration_ms":2,"ok":true,"client":"oauth:Gemini#1234abcd"}
 ```
 
-* ファイル本文、`call_mcp_tool` の引数の値、`write_stdin` の入力（パスワードかもしれないため）は記録しません（サイズ・ハッシュ・キー名のみ）。
+* ファイル本文、`call_mcp_tool` の引数の値と中継先のエラー内容、`write_stdin` の入力（パスワードかもしれないため）は記録しません（サイズ・ハッシュ・キー名のみ）。
+* `run_command` の引数と `run_shell` のスクリプトの先頭（200 文字）は記録します。秘密情報はコマンドラインに書かず、`--env-passthrough` で渡してください。
 * ログファイルは `0600` で作成し、`SIGHUP` で開き直します。

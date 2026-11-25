@@ -1,10 +1,10 @@
 # sh-mcp
 
-sh-mcpは、AIアシスタントにMCP経由でマシン上のファイル操作とコマンド実行を行わせるためのサーバーです。
+sh-mcpはAIアシスタントにMCP経由でマシン上のファイル操作とコマンド実行を行わせるためのサーバーです。
 
 Go製のシングルバイナリで、ローカル（`stdio`）とリモート（Streamable HTTP）の両方で使えます。
 
-ほぼほぼコーディングエージェントととかと同じような作業ができます。あとstdioで動いてるMCPサーバーをsh-mcp経由でリモートから使用したりとかもできます。
+ほぼほぼコーディングエージェントと同じような作業ができます。また、stdioで動いているMCPサーバーをsh-mcp経由でリモートから使うこともできます。
 
 ## 主な特徴
 
@@ -17,17 +17,17 @@ Go製のシングルバイナリで、ローカル（`stdio`）とリモート�
 
 ## インストール
 
-[GitHub Releases](https://github.com/yh2237/sh-mcp/releases) からバイナリを取得して実行権限付けるだけです。
+[GitHub Releases](https://github.com/yh2237/sh-mcp/releases) からバイナリを取得して実行権限を付けるだけです。
 
 以下でも `~/.local/bin`（Windows は `%LOCALAPPDATA%\Programs\sh-mcp`）にインストールできます。
 
-Linux / macOS:
+Linux / macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.sh | sh
 ```
 
-Windows（PowerShell）:
+Windows（PowerShell）
 
 ```powershell
 irm https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.ps1 | iex
@@ -35,7 +35,7 @@ irm https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.ps1 | iex
 
 更新は `sh-mcp --update` です。
 
-ソースからビルドする場合（Go 1.26 以上）:
+ソースからビルドする場合（Go 1.26 以上）
 
 ```bash
 git clone https://github.com/yh2237/sh-mcp.git
@@ -75,7 +75,7 @@ sh-mcp \
 | `ask` | 可 | 毎回承認 | 毎回承認（`--auto-approve-command` で指定したプログラムは承認なし） |
 | `full` | 可 | 自由 | 自由 |
 
-承認は、クライアントが対応していれば sh-mcp が確認を出し、対応していなければクライアント自身の確認画面に任せます（Geminiアプリとかはそんな感じ）。詳しくは[セキュリティ](docs/security.md)を見てください。
+承認は、クライアントが対応していれば sh-mcp が確認を出し、対応していなければクライアント自身の確認画面に任せます（Geminiアプリなど）。詳しくは[セキュリティ](docs/security.md)を見てください。
 
 ## ドキュメント
 

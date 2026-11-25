@@ -47,13 +47,13 @@ WantedBy=multi-user.target
 
 起動後、`curl http://127.0.0.1:8080/healthz` で `ok` が返れば動いています。
 
-注意点:
+注意点
 
-* **`PATH`**: systemd から起動すると `PATH` が最小限になり、`~/go/bin` や nvm の `node` などが見つかりません。必要なディレクトリを `PATH` に含めてください。エージェントから見えるツールは `get_environment` で確認できます。
-* **環境変数**: `.bashrc` などは読まれません。基本リストにない変数は `--env-passthrough` で渡します（[設定リファレンス](configuration.md#子プロセスの環境変数)）。
-* **`journalctl`**: 自分のユーザーが `systemd-journal`（または `adm`）グループに入っていないと、他のサービスのログは読めません。
-* **再起動**: 実行中のジョブと中継先の MCP サーバーも止まります。
-* **ログのローテーション**: ローテーションした後は `systemctl reload sh-mcp`（`SIGHUP`）で監査ログを開き直します。
+* `PATH`: systemd から起動すると `PATH` が最小限になり、`~/go/bin` や nvm の `node` などが見つかりません。必要なディレクトリを `PATH` に含めてください。エージェントから見えるツールは `get_environment` で確認できます。
+* 環境変数: `.bashrc` などは読まれません。基本リストにない変数は `--env-passthrough` で渡します（[設定リファレンス](configuration.md#子プロセスの環境変数)）。
+* `journalctl`: 自分のユーザーが `systemd-journal`（または `adm`）グループに入っていないと、他のサービスのログは読めません。
+* 再起動: 実行中のジョブと中継先の MCP サーバーも止まります。
+* ログのローテーション: ローテーションした後は `systemctl reload sh-mcp`（`SIGHUP`）で監査ログを開き直します。
 
 ## 3. Cloudflare Tunnel で公開
 

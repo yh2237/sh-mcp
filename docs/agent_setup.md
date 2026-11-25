@@ -1,6 +1,6 @@
 # エージェント向けセットアップガイド
 
-このドキュメントは、ユーザーに頼まれて sh-mcp をインストール・設定する AI エージェント向けの手順です。上から順に進めてください。
+このドキュメントはユーザーに頼まれて sh-mcp をインストール・設定する AI エージェント向けの手順です。上から順に進めてください。
 
 まずはREADME.mdやその他ドキュメントを読んでこのMCPサーバーについて把握してください。
 
@@ -8,12 +8,12 @@
 
 推測で決めず、次の点をユーザーに確認してから作業を始めます。
 
-1. **使い方**: 同じマシンの CLI エージェントから使う（ローカル / `stdio`）か、スマホのアプリなど別の場所から使う（リモート / HTTP）か。まぁ多分リモートです。このMCPサーバーをstdioで使う旨味は正直無い。
-2. **モード**: `read`（読み取りのみ）/ `ask`（編集とコマンド実行を毎回承認）/ `full`（制限なし）のどれにするか。迷っている場合は `read` か `ask` を勧めます。
-3. **アクセスを許可するディレクトリ**: 作業対象のプロジェクトのディレクトリなど。
-4. `ask` の場合は**承認なしで実行してよいコマンド**（任意）。
-5. リモートの場合は**公開 URL と公開方法**（Cloudflare Tunnel など）と、トンネルを動かすのが**このマシンか別のマシンか**。
-6. 同じマシンの **stdio 専用の MCP サーバーを中継するか**（任意。`--mcp-server`）。
+1. 使い方: 同じマシンの CLI エージェントから使う（ローカル / `stdio`）か、スマホのアプリなど別の場所から使う（リモート / HTTP）か。まぁ多分リモートです。このMCPサーバーをstdioで使う旨味は正直無い。
+2. モード: `read`（読み取りのみ）/ `ask`（編集とコマンド実行を毎回承認）/ `full`（制限なし）のどれにするか。迷っている場合は `read` か `ask` を勧めます。
+3. アクセスを許可するディレクトリ: 作業対象のプロジェクトのディレクトリなど。
+4. `ask` の場合は承認なしで実行してよいコマンド（任意）。
+5. リモートの場合は公開 URL と公開方法（Cloudflare Tunnel など）と、トンネルを動かすのがこのマシンか別のマシンか。
+6. 同じマシンの stdio 専用の MCP サーバーを中継するか（任意。`--mcp-server`）。
 
 次のことは、ユーザーが明示的に望まない限りしないでください。
 
@@ -22,13 +22,13 @@
 
 ## 2. インストール
 
-Linux / macOS:
+Linux / macOS
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.sh | sh
 ```
 
-Windows（PowerShell）:
+Windows（PowerShell）
 
 ```powershell
 irm https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.ps1 | iex
@@ -36,19 +36,19 @@ irm https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.ps1 | iex
 
 インストール先は `~/.local/bin/sh-mcp`（Windows は `%LOCALAPPDATA%\Programs\sh-mcp\sh-mcp.exe`）です。`sh-mcp --version` で確認します。すでに入っている場合は `sh-mcp --update` で最新版にします（動いているサーバーは再起動が必要です）。
 
-MCP クライアントの設定には、`PATH` に頼らず絶対パスを書いてください。
+MCP クライアントの設定には `PATH` に頼らず絶対パスを書いてください。
 
 ## 3. ローカル（`stdio`）で登録する
 
 ユーザーが使っている MCP クライアントに登録します。以下の `/path/to/project` と `--mode` は手順 1 で確認した内容に置き換えます。Windows では実行ファイルを `C:\Users\<ユーザー>\AppData\Local\Programs\sh-mcp\sh-mcp.exe` に置き換えます（JSON や TOML では `\` を `\\` と書きます）。
 
-Claude Code:
+Claude Code
 
 ```bash
 claude mcp add --scope user sh-mcp -- ~/.local/bin/sh-mcp --mode read --allow-dir /path/to/project
 ```
 
-Codex CLI（`~/.codex/config.toml`）:
+Codex CLI（`~/.codex/config.toml`）
 
 ```toml
 [mcp_servers.sh-mcp]
@@ -56,7 +56,7 @@ command = "/home/you/.local/bin/sh-mcp"
 args = ["--mode", "read", "--allow-dir", "/path/to/project"]
 ```
 
-`mcpServers` 形式の JSON を使うクライアント:
+`mcpServers` 形式の JSON を使うクライアント
 
 ```json
 {
@@ -90,9 +90,9 @@ args = ["--mode", "read", "--allow-dir", "/path/to/project"]
   curl https://<公開ホスト>/.well-known/oauth-authorization-server                # JSON
   ```
 
-* クライアントの接続は、ユーザーに次のとおり案内します。
-  * **Gemini アプリ**: カスタムアプリの URL に `https://<公開ホスト>/mcp` を指定します。クライアント ID とシークレットの欄は空欄のままにします（sh-mcp が自動で登録します）。同意画面で `SH_MCP_AUTH_TOKEN` を入力します。編集やコマンドの前に出る許可カードで「常に許可」を選ぶと、以後は確認が出なくなります。
-  * **Claude Code**: `claude mcp add --transport http sh-mcp https://<公開ホスト>/mcp --header "Authorization: Bearer $SH_MCP_AUTH_TOKEN"`
+* クライアントの接続はユーザーに次のとおり案内します。
+  * Gemini アプリ: カスタムアプリの URL に `https://<公開ホスト>/mcp` を指定します。クライアント ID とシークレットの欄は空欄のままにします（sh-mcp が自動で登録します）。同意画面で `SH_MCP_AUTH_TOKEN` を入力します。編集やコマンドの前に出る許可カードで「常に許可」を選ぶと、以後は確認が出なくなります。
+  * Claude Code: `claude mcp add --transport http sh-mcp https://<公開ホスト>/mcp --header "Authorization: Bearer $SH_MCP_AUTH_TOKEN"`
 
 ## 5. 動作確認
 

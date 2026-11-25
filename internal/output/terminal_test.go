@@ -2,6 +2,7 @@ package output
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 )
 
@@ -42,6 +43,47 @@ func TestStripTerminal(t *testing.T) {
 		if got := strip([]byte(in)); got != want {
 			t.Errorf("strip(%q) = %q, want %q", in, got, want)
 		}
+	}
+}
+
+func TestTerminalColumns(t *testing.T) {
+	cases := map[string]string{
+		// Wide characters take two columns; the cursor moves by columns.
+		"日本\x1b[2Dx":  "日x",
+		"日本語\b\b!!":   "日本!!",
+		"日本語\b!":      "日本 !",
+		"日本\rab":      "ab本",      // a blanks all of 日, b fills its second column
+		"e\u0301t\bE": "e\u0301E", // a combining accent stays on its letter
+		// Tabs move to the next stop.
+		"a\tb":        "a       b",
+		"abcdefgh\tc": "abcdefgh        c",
+		// Cursor movement is bounded.
+		"\x1b[999999Cx": strings.Repeat(" ", maxLineCells-1) + "x",
+	}
+	for in, want := range cases {
+		if got := strip([]byte(in)); got != want {
+			t.Errorf("strip(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestTerminalBounded(t *testing.T) {
+	var out bytes.Buffer
+	term := NewTerminal(&out)
+	// Output without line breaks is written out in pieces.
+	term.Write(bytes.Repeat([]byte("x"), 3*maxLineCells+5))
+	if got := len(term.Pending()); got > maxLineCells {
+		t.Errorf("pending line grew to %d cells", got)
+	}
+	if strings.Count(out.String(), "\n") != 3 {
+		t.Errorf("expected 3 wrapped lines, got %q...", out.String()[:20])
+	}
+	// A runaway unfinished escape sequence is dropped.
+	term = NewTerminal(&out)
+	term.Write(append([]byte("\x1b]"), bytes.Repeat([]byte("a"), 2*maxEscape)...))
+	term.Write([]byte("\x1b[2K\rok"))
+	if got := term.Pending(); !strings.HasSuffix(got, "ok") {
+		t.Errorf("after a runaway sequence: %q", got)
 	}
 }
 

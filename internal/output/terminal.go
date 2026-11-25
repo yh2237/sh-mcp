@@ -5,21 +5,31 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"unicode"
 	"unicode/utf8"
 )
 
-// maxBlankLines caps the empty lines produced by a jump down the screen (a
-// cleared screen would otherwise become dozens of them).
-const maxBlankLines = 2
+const (
+	// maxBlankLines caps the empty lines produced by a jump down the screen
+	// (a cleared screen would otherwise become dozens of them).
+	maxBlankLines = 2
+	// maxLineCells bounds the line being edited: output without line breaks
+	// is written out in pieces of this width, and cursor movement stops here.
+	maxLineCells = 4096
+	// maxEscape bounds an unfinished escape sequence kept for the next write.
+	maxEscape = 4096
+	tabWidth  = 8
+)
 
 // Terminal turns the output of a pseudo-terminal into plain text, the way it
 // would look on screen line by line, as it arrives. Finished lines are
 // written to the underlying writer; the line the cursor is on (often a
 // prompt) stays editable and is available from Pending.
 //
-// Within the current line it follows the cursor: text overwrites, and
-// carriage return, backspace, cursor left/right/column, erase and
-// insert/delete apply (so progress bars and REPLs that redraw their input
+// Within the current line it follows the cursor in screen columns (wide
+// characters such as Japanese take two, tabs move to the next stop): text
+// overwrites, and carriage return, backspace, cursor left/right/column, erase
+// and insert/delete apply (so progress bars and REPLs that redraw their input
 // line come out once). Moving the cursor down to another row (how Windows'
 // pseudo-console skips lines) becomes line breaks. Other escape sequences
 // (colors, titles, modes) are dropped. Programs that draw on the whole screen
@@ -42,7 +52,9 @@ func (t *Terminal) Write(p []byte) (int, error) {
 	b := append(t.rest, p...)
 	t.rest = nil
 	n := t.t.feed(b)
-	t.rest = append([]byte(nil), b[n:]...)
+	if len(b)-n <= maxEscape {
+		t.rest = append([]byte(nil), b[n:]...)
+	} // else: a runaway sequence, dropped
 	if len(t.t.out) > 0 {
 		_, err := t.w.Write(t.t.out)
 		t.t.out = t.t.out[:0]
@@ -57,16 +69,18 @@ func (t *Terminal) Write(p []byte) (int, error) {
 func (t *Terminal) Pending() string {
 	t.mu.Lock()
 	defer t.mu.Unlock()
-	return strings.TrimRight(string(t.t.line), " ")
+	return t.t.text()
 }
 
 // lineTerm emulates a terminal one line at a time: finished lines go to out,
 // the current one can still be edited.
 type lineTerm struct {
-	out  []byte
-	line []rune
-	col  int
-	row  int // 1-based screen row of the current line
+	out []byte
+	// cells are the screen columns of the current line: one character each,
+	// "" for the second column of a wide character.
+	cells []string
+	col   int
+	row   int // 1-based screen row of the current line
 }
 
 // feed processes b and returns how many bytes were used; the rest is an
@@ -91,7 +105,7 @@ func (t *lineTerm) feed(b []byte) int {
 		case c == '\b':
 			t.col = max(t.col-1, 0)
 		case c == '\t':
-			t.put('\t')
+			t.col = min((t.col/tabWidth+1)*tabWidth, maxLineCells-1)
 		case c < 0x20 || c == 0x7f:
 			// other control characters (bell, ...) have no text
 		default:
@@ -109,20 +123,54 @@ func (t *lineTerm) feed(b []byte) int {
 }
 
 func (t *lineTerm) put(r rune) {
-	for len(t.line) < t.col {
-		t.line = append(t.line, ' ')
+	w := runeWidth(r)
+	if w == 0 {
+		// A combining mark or joiner belongs to the character before it.
+		for i := min(t.col, len(t.cells)) - 1; i >= 0; i-- {
+			if t.cells[i] != "" {
+				t.cells[i] += string(r)
+				break
+			}
+		}
+		return
 	}
-	if t.col < len(t.line) {
-		t.line[t.col] = r
-	} else {
-		t.line = append(t.line, r)
+	if t.col+w > maxLineCells {
+		t.newline() // wrap a runaway line
 	}
-	t.col++
+	for len(t.cells) < t.col+w {
+		t.cells = append(t.cells, " ")
+	}
+	t.clearWide(t.col)
+	if w == 2 {
+		t.clearWide(t.col + 1)
+	}
+	t.cells[t.col] = string(r)
+	if w == 2 {
+		t.cells[t.col+1] = ""
+	}
+	t.col += w
+}
+
+// clearWide blanks the other half of a wide character before column i is
+// overwritten, as a terminal does.
+func (t *lineTerm) clearWide(i int) {
+	if i >= len(t.cells) {
+		return
+	}
+	if t.cells[i] == "" && i > 0 {
+		t.cells[i-1] = " "
+	} else if i+1 < len(t.cells) && t.cells[i+1] == "" {
+		t.cells[i+1] = " "
+	}
+}
+
+func (t *lineTerm) text() string {
+	return strings.TrimRight(strings.Join(t.cells, ""), " ")
 }
 
 func (t *lineTerm) flush() {
-	t.out = append(t.out, strings.TrimRight(string(t.line), " ")...)
-	t.line, t.col = t.line[:0], 0
+	t.out = append(t.out, t.text()...)
+	t.cells, t.col = t.cells[:0], 0
 }
 
 func (t *lineTerm) newline() {
@@ -141,12 +189,14 @@ func (t *lineTerm) moveTo(row, col int) {
 			t.flush()
 			t.out = append(t.out, '\n')
 		}
-	case row < t.row && len(t.line) > 0:
+	case row < t.row && len(t.cells) > 0:
 		t.flush()
 		t.out = append(t.out, '\n')
 	}
-	t.row, t.col = row, max(col, 0)
+	t.row, t.col = row, clampCol(col)
 }
+
+func clampCol(col int) int { return min(max(col, 0), maxLineCells-1) }
 
 // csi applies the cursor and erase sequences that affect the text.
 func (t *lineTerm) csi(final byte, params string) {
@@ -154,7 +204,7 @@ func (t *lineTerm) csi(final byte, params string) {
 	arg := func(i int) int {
 		if i < len(fields) {
 			if v, err := strconv.Atoi(fields[i]); err == nil && v > 0 {
-				return v
+				return min(v, maxLineCells)
 			}
 		}
 		return 1
@@ -164,9 +214,9 @@ func (t *lineTerm) csi(final byte, params string) {
 	case 'D': // cursor left
 		t.col = max(t.col-n, 0)
 	case 'C': // cursor right
-		t.col += n
+		t.col = clampCol(t.col + n)
 	case 'G': // cursor to column
-		t.col = n - 1
+		t.col = clampCol(n - 1)
 	case 'H', 'f': // cursor to row;column
 		t.moveTo(arg(0), arg(1)-1)
 	case 'B', 'E': // cursor down (E also to column 1)
@@ -184,29 +234,66 @@ func (t *lineTerm) csi(final byte, params string) {
 	case 'K': // erase in line
 		switch params {
 		case "", "0":
-			if t.col < len(t.line) {
-				t.line = t.line[:t.col]
+			if t.col < len(t.cells) {
+				t.clearWide(t.col)
+				t.cells = t.cells[:t.col]
 			}
 		case "1":
-			for i := 0; i <= t.col && i < len(t.line); i++ {
-				t.line[i] = ' '
+			for i := 0; i <= t.col && i < len(t.cells); i++ {
+				t.cells[i] = " "
 			}
+			t.clearWide(t.col + 1)
 		case "2":
-			t.line = t.line[:0]
+			t.cells = t.cells[:0]
 		}
 	case 'X': // erase characters
-		for i := t.col; i < t.col+n && i < len(t.line); i++ {
-			t.line[i] = ' '
+		for i := t.col; i < t.col+n && i < len(t.cells); i++ {
+			t.clearWide(i)
+			t.cells[i] = " "
 		}
 	case 'P': // delete characters
-		if t.col < len(t.line) {
-			t.line = append(t.line[:t.col], t.line[min(t.col+n, len(t.line)):]...)
+		if t.col < len(t.cells) {
+			t.clearWide(t.col)
+			t.cells = append(t.cells[:t.col], t.cells[min(t.col+n, len(t.cells)):]...)
 		}
 	case '@': // insert blanks
-		if t.col < len(t.line) {
-			t.line = append(t.line[:t.col], append([]rune(strings.Repeat(" ", n)), t.line[t.col:]...)...)
+		if t.col < len(t.cells) {
+			t.clearWide(t.col)
+			blank := make([]string, n)
+			for i := range blank {
+				blank[i] = " "
+			}
+			t.cells = append(t.cells[:t.col], append(blank, t.cells[t.col:]...)...)
+			if len(t.cells) > maxLineCells {
+				t.cells = t.cells[:maxLineCells]
+			}
 		}
 	}
+}
+
+// runeWidth is the number of screen columns r takes: 2 for East Asian wide
+// characters and most emoji, 0 for combining marks and format characters.
+func runeWidth(r rune) int {
+	switch {
+	case unicode.In(r, unicode.Mn, unicode.Me, unicode.Cf):
+		return 0
+	case r >= 0x1100 && r <= 0x115f, // Hangul Jamo
+		r >= 0x2e80 && r <= 0x303e, // CJK radicals, punctuation
+		r >= 0x3041 && r <= 0x33ff, // kana, CJK compatibility
+		r >= 0x3400 && r <= 0x4dbf, // CJK extension A
+		r >= 0x4e00 && r <= 0x9fff, // CJK ideographs
+		r >= 0xa000 && r <= 0xa4cf, // Yi
+		r >= 0xac00 && r <= 0xd7a3, // Hangul syllables
+		r >= 0xf900 && r <= 0xfaff, // CJK compatibility ideographs
+		r >= 0xfe30 && r <= 0xfe4f, // CJK compatibility forms
+		r >= 0xff00 && r <= 0xff60, // full-width forms
+		r >= 0xffe0 && r <= 0xffe6,
+		r >= 0x1f300 && r <= 0x1f64f, // emoji
+		r >= 0x1f900 && r <= 0x1f9ff,
+		r >= 0x20000 && r <= 0x3fffd: // CJK extensions B and later
+		return 2
+	}
+	return 1
 }
 
 // parseEscape parses the escape sequence starting at b[i] (ESC). It returns

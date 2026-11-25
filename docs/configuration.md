@@ -10,6 +10,7 @@
 | :--- | :--- | :--- | :--- |
 | `--mode` | `SH_MCP_MODE` | `read` | `read` / `ask` / `full`（[セキュリティ](security.md#2-モードと承認)） |
 | `--allow-dir` | `SH_MCP_ALLOW_DIR` | `stdio`: カレント / `http`: 必須 | アクセスを許可するディレクトリ（複数可）。先頭が相対パスの基準 |
+| `--allow-read-dir` | `SH_MCP_ALLOW_READ_DIR` | なし | 読み取り専用ツール（ファイル読み取り・検索・git）だけ許可する追加ディレクトリ（複数可） |
 | `--auto-approve-command` | `SH_MCP_AUTO_APPROVE_COMMAND` | なし | `ask` で承認なしに実行できるプログラム（複数可、`ask` でのみ指定） |
 | `--deny-glob` | `SH_MCP_DENY_GLOB` | 後述 | ファイル操作ツールから保護する glob（複数可）。先頭 `!` で例外 |
 | `--env-passthrough` | `SH_MCP_ENV_PASSTHROUGH` | なし | コマンド・MCP サーバーに追加で渡す環境変数（複数可、末尾 `*` で前方一致） |

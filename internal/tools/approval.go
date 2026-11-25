@@ -3,6 +3,7 @@ package tools
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -47,14 +48,15 @@ func approvalBySession(req *mcp.CallToolRequest) bool {
 
 // approve returns nil when the call may go ahead, errDeclined when the user
 // refused, or *errNeedsApproval when the user has to be asked first. message
-// describes exactly what will happen; a retry is only accepted for the same
-// message, so the user never approves something other than what runs.
+// describes what will happen. A retry is only accepted with the same
+// arguments and the same message (which also covers state the handler read,
+// such as the diff of an edit), so the user never approves something other
+// than what runs.
 func (d *Deps) approve(req *mcp.CallToolRequest, message string) error {
 	if !d.needsApproval() || !approvalBySession(req) {
 		return nil
 	}
-	sum := sha256.Sum256([]byte(req.Params.Name + "\x00" + message))
-	state := hex.EncodeToString(sum[:])
+	state := approvalState(req.Params.Name, req.Params.Arguments, message)
 	if res, ok := req.Params.InputResponses[approvalInputID].(*mcp.ElicitResult); ok && req.Params.RequestState == state {
 		if res.Action == "accept" {
 			return nil
@@ -66,6 +68,24 @@ func (d *Deps) approve(req *mcp.CallToolRequest, message string) error {
 		Message:         truncate(message, maxApprovalMessage),
 		RequestedSchema: map[string]any{"type": "object", "properties": map[string]any{}},
 	}}
+}
+
+// approvalState digests the call. Arguments are re-encoded first so that a
+// client re-serializing them on retry (key order, spacing) still matches.
+func approvalState(tool string, args json.RawMessage, message string) string {
+	canonical := []byte(args)
+	var v any
+	if json.Unmarshal(args, &v) == nil {
+		if b, err := json.Marshal(v); err == nil {
+			canonical = b
+		}
+	}
+	h := sha256.New()
+	for _, part := range [][]byte{[]byte(tool), canonical, []byte(message)} {
+		h.Write(part)
+		h.Write([]byte{0})
+	}
+	return hex.EncodeToString(h.Sum(nil))
 }
 
 // approvalNote describes, for get_environment, how approvals work for the

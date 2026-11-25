@@ -3,6 +3,7 @@ module github.com/yh2237/sh-mcp
 go 1.26.0
 
 require (
+	github.com/creack/pty v1.1.24
 	github.com/modelcontextprotocol/go-sdk v1.8.0
 	golang.org/x/sys v0.50.0
 )

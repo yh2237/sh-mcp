@@ -3,6 +3,7 @@
 package proc
 
 import (
+	"errors"
 	"os/exec"
 	"syscall"
 	"unsafe"
@@ -62,4 +63,9 @@ func release(t *platformTree) {
 		windows.CloseHandle(t.job)
 		t.job = 0
 	}
+}
+
+// Ctrl-C cannot be delivered to a process without a console of its own.
+func interruptTree(*exec.Cmd, *platformTree) error {
+	return errors.New("interrupting a process is not supported on Windows; use kill_job")
 }

@@ -28,7 +28,7 @@ import (
 const instructions = `sh-mcp gives you access to files (and, depending on its mode, commands) on the machine it runs on, like working in a terminal there.
 Start with get_environment to learn the OS, allowed directories, default directory, mode and installed tools.
 Paths may be absolute or relative to the default directory; only paths inside the allowed directories are accessible.
-Read files before editing them; edit_file needs exact old_text. Use git_status, git_diff and git_log (read-only, no approval) rather than git through run_command. Commands that run longer than wait_sec keep running as background jobs: follow them with get_job_output.
+Read files before editing them; edit_file needs exact old_text. Use git_status, git_diff and git_log (read-only, no approval) rather than git through run_command. Commands that run longer than wait_sec keep running as background jobs: follow them with get_job_output. For interactive programs (a shell session, REPL, ssh, password prompt) start them with tty=true and type into them with write_stdin.
 Depending on the mode, changes and commands may wait for the user's approval; if the user declines, do not retry the same action without asking.`
 
 type Server struct {

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"syscall"
 	"time"
@@ -32,6 +33,7 @@ type runCommandInput struct {
 	Stdin      string   `json:"stdin,omitempty" jsonschema:"text to pass on standard input"`
 	WaitSec    *int     `json:"wait_sec,omitempty" jsonschema:"seconds to wait for the command to finish before returning a job_id and leaving it running in the background, 0-120 (default 30; 0 starts it in the background immediately)"`
 	TimeoutSec *int     `json:"timeout_sec,omitempty" jsonschema:"kill the command after this many seconds (default 600). Use 0 for servers and watchers that should keep running until kill_job"`
+	TTY        bool     `json:"tty,omitempty" jsonschema:"run in a pseudo-terminal so the program can be driven with write_stdin: shells, REPLs, ssh, password prompts, interactive installers. Output has terminal control codes removed. Use timeout_sec 0 for a session that should stay open"`
 }
 
 type runShellInput struct {
@@ -40,6 +42,7 @@ type runShellInput struct {
 	Stdin      string `json:"stdin,omitempty" jsonschema:"text to pass on standard input"`
 	WaitSec    *int   `json:"wait_sec,omitempty" jsonschema:"seconds to wait for the script to finish before returning a job_id and leaving it running in the background, 0-120 (default 30; 0 starts it in the background immediately)"`
 	TimeoutSec *int   `json:"timeout_sec,omitempty" jsonschema:"kill the script after this many seconds (default 600). Use 0 for servers and watchers that should keep running until kill_job"`
+	TTY        bool   `json:"tty,omitempty" jsonschema:"run in a pseudo-terminal so the program can be driven with write_stdin: shells, REPLs, ssh, password prompts, interactive installers. Output has terminal control codes removed. Use timeout_sec 0 for a session that should stay open"`
 }
 
 type jobOutputInput struct {
@@ -53,6 +56,19 @@ type jobIDInput struct {
 }
 
 type listJobsInput struct{}
+
+type writeStdinInput struct {
+	JobID   string `json:"job_id"`
+	Input   string `json:"input,omitempty" jsonschema:"keys to type into the job's terminal; end a line with \n. Control keys are JSON escapes: \u0003 Ctrl-C, \u0004 Ctrl-D (end of input), \u001b Escape, \u001b[A up arrow. Empty input just reads new output"`
+	WaitSec *int   `json:"wait_sec,omitempty" jsonschema:"seconds to wait for output at most, 0-120 (default 5); returns as soon as the output pauses"`
+}
+
+const (
+	defaultStdinWaitSec = 5
+	// outputPause is how long output must stop before write_stdin returns:
+	// a prompt has usually been printed by then.
+	outputPause = 300 * time.Millisecond
+)
 
 const backgroundHelp = "If it is still running after wait_sec, the result has a job_id instead of an exit code and the process keeps running: " +
 	"read more with get_job_output, stop it with kill_job. Output is stdout and stderr combined; long output keeps the beginning and the end."
@@ -82,6 +98,9 @@ func registerExec(s *mcp.Server, d *Deps) {
 			display := strings.Join(append([]string{in.Command}, in.Args...), " ")
 			if !d.Cmd.PreApproved(exe) {
 				msg := fmt.Sprintf("Run this command?\ncommand: %s\nprogram: %s\ncwd: %s", display, exe, dir)
+				if in.TTY {
+					msg += "\n(in a terminal; later input is approved separately)"
+				}
 				if in.Stdin != "" {
 					msg += "\nstdin: " + truncate(in.Stdin, 500)
 				}
@@ -89,7 +108,7 @@ func registerExec(s *mcp.Server, d *Deps) {
 					return "", err
 				}
 			}
-			return d.launch(ctx, req, jobs.StartOptions{Argv: append([]string{exe}, in.Args...), Dir: dir, Stdin: in.Stdin, Display: display}, in.WaitSec, in.TimeoutSec)
+			return d.launch(ctx, req, jobs.StartOptions{Argv: append([]string{exe}, in.Args...), Dir: dir, Stdin: in.Stdin, Display: display, TTY: in.TTY}, in.WaitSec, in.TimeoutSec)
 		})
 
 	shellDesc := fmt.Sprintf("Run a script with %s and return its exit code and output. "+
@@ -120,7 +139,7 @@ func registerExec(s *mcp.Server, d *Deps) {
 		if err := d.approve(req, msg); err != nil {
 			return "", err
 		}
-		return d.launch(ctx, req, jobs.StartOptions{Argv: argv, Dir: dir, Stdin: in.Stdin, Display: truncate(in.Script, 200), Configure: configure}, in.WaitSec, in.TimeoutSec)
+		return d.launch(ctx, req, jobs.StartOptions{Argv: argv, Dir: dir, Stdin: in.Stdin, Display: truncate(in.Script, 200), Configure: configure, TTY: in.TTY}, in.WaitSec, in.TimeoutSec)
 	})
 
 	addTool(s, d, &mcp.Tool{
@@ -131,6 +150,22 @@ func registerExec(s *mcp.Server, d *Deps) {
 	}, func(in jobOutputInput) map[string]any {
 		return map[string]any{"job_id": in.JobID, "offset": in.Offset}
 	}, d.jobOutput)
+
+	stdinDesc := "Type into a job started with tty=true (a shell, REPL, ssh session or password prompt) and return the output that follows; " +
+		"empty input just reads new output. It returns as soon as the output pauses, which usually means the program waits for input again. " +
+		`For a job without a terminal, only Ctrl-C ("\u0003") can be sent.`
+	if d.needsApproval() {
+		stdinDesc += " Each input waits for the user's approval."
+	}
+	addTool(s, d, &mcp.Tool{
+		Name:        "write_stdin",
+		Title:       "Write to job",
+		Description: stdinDesc,
+		Annotations: execAnn,
+	}, func(in writeStdinInput) map[string]any {
+		// The input itself is not logged: it may be a password.
+		return map[string]any{"job_id": in.JobID, "input_bytes": len(in.Input)}
+	}, d.writeStdin)
 
 	addTool(s, d, &mcp.Tool{
 		Name:        "kill_job",
@@ -183,12 +218,26 @@ func secOrDefault(p *int, def, maxSec int) time.Duration {
 // stays a background job.
 func (d *Deps) launch(ctx context.Context, req *mcp.CallToolRequest, o jobs.StartOptions, waitSec, timeoutSec *int) (string, error) {
 	o.Env = d.Cmd.Env()
+	if o.TTY {
+		// Programs that draw on a terminal look at TERM; their control codes
+		// are removed from the output anyway.
+		o.Env = append(o.Env, "TERM=xterm-256color")
+	}
 	o.Timeout = secOrDefault(timeoutSec, defaultTimeoutSec, 0)
 	j, err := d.Jobs.Start(o)
 	if err != nil {
 		return "", err
 	}
-	exited := j.Wait(ctx, secOrDefault(waitSec, defaultWaitSec, maxWaitSec), progressReporter(ctx, req, j))
+	wait := secOrDefault(waitSec, defaultWaitSec, maxWaitSec)
+	var exited bool
+	if o.TTY {
+		// An interactive program rarely exits: return once it waits for
+		// input, which shows as a pause in its output.
+		j.WaitOutput(ctx, 0, wait, outputPause)
+		exited = j.Wait(ctx, 0, nil)
+	} else {
+		exited = j.Wait(ctx, wait, progressReporter(ctx, req, j))
+	}
 	if !exited && ctx.Err() != nil {
 		// The caller gave up (cancelled request): don't leave work behind.
 		j.Kill()
@@ -208,12 +257,63 @@ func (d *Deps) launch(ctx context.Context, req *mcp.CallToolRequest, o jobs.Star
 	if exited {
 		d.Jobs.Forget(j.ID)
 		b.WriteString(exitLine(info))
+	} else if info.TTY {
+		j.SetCursor(next)
+		fmt.Fprintf(&b, "%s is running in a terminal (%s). Type into it with write_stdin job_id=%q; stop it with kill_job.\n", info.ID, timeoutText(info.Timeout), info.ID)
 	} else {
 		fmt.Fprintf(&b, "%s is still running in the background after %s (%s).\n", info.ID, time.Since(info.Started).Round(time.Second), timeoutText(info.Timeout))
 		fmt.Fprintf(&b, "Call get_job_output with job_id=%q and offset=%d to wait for more output, or kill_job to stop it.\n", info.ID, next)
 	}
 	fmt.Fprintf(&b, "duration: %s\n", time.Since(info.Started).Round(time.Millisecond))
-	writeOutput(&b, data, dropped)
+	writeOutput(&b, data, dropped, info.TTY)
+	return b.String(), nil
+}
+
+// writeStdin types into a terminal job (or interrupts a job without one) and
+// returns the output that follows.
+func (d *Deps) writeStdin(ctx context.Context, req *mcp.CallToolRequest, in writeStdinInput) (string, error) {
+	j, err := d.Jobs.Get(in.JobID)
+	if err != nil {
+		return "", err
+	}
+	if in.Input != "" {
+		if !j.TTY() {
+			// Without a terminal, Ctrl-C can still be delivered as a signal.
+			if in.Input != "\x03" {
+				return "", jobs.ErrNoTTY
+			}
+			if err := j.Interrupt(); err != nil {
+				return "", err
+			}
+		} else {
+			msg := fmt.Sprintf("Type this into %s (%s)?\n%s", j.ID, j.Command, strconv.Quote(in.Input))
+			if err := d.approve(req, msg); err != nil {
+				return "", err
+			}
+			if err := j.WriteInput(in.Input); err != nil {
+				return "", err
+			}
+		}
+	}
+	from := j.Cursor()
+	if !j.TTY() {
+		from = j.Info().OutputBytes
+	}
+	j.WaitOutput(ctx, from, secOrDefault(in.WaitSec, defaultStdinWaitSec, maxWaitSec), outputPause)
+	data, next, dropped := j.Read(from, maxResultBytes)
+	j.SetCursor(next)
+	info := j.Info()
+	var b strings.Builder
+	b.WriteString(formatJob(info))
+	b.WriteString("\n")
+	if len(data) == 0 && dropped == 0 {
+		b.WriteString("(no new output)\n")
+		return b.String(), nil
+	}
+	writeOutput(&b, data, dropped, info.TTY)
+	if next < info.OutputBytes {
+		b.WriteString("(more output follows: call write_stdin with empty input to read it)\n")
+	}
 	return b.String(), nil
 }
 
@@ -237,7 +337,7 @@ func (d *Deps) jobOutput(ctx context.Context, req *mcp.CallToolRequest, in jobOu
 		b.WriteString("(no new output)\n")
 		return b.String(), nil
 	}
-	writeOutput(&b, data, dropped)
+	writeOutput(&b, data, dropped, info.TTY)
 	return b.String(), nil
 }
 
@@ -261,7 +361,12 @@ func progressReporter(ctx context.Context, req *mcp.CallToolRequest, j *jobs.Job
 	}
 }
 
-func writeOutput(b *strings.Builder, data []byte, dropped int64) {
+// writeOutput appends a job's output; terminal output is turned into plain
+// text first.
+func writeOutput(b *strings.Builder, data []byte, dropped int64, tty bool) {
+	if tty {
+		data = output.StripTerminal(data)
+	}
 	if dropped > 0 {
 		fmt.Fprintf(b, "(%d earlier bytes of output were discarded)\n", dropped)
 	}

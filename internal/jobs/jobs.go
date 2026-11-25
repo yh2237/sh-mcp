@@ -4,6 +4,8 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
+	"os"
 	"os/exec"
 	"sort"
 	"strconv"
@@ -53,12 +55,17 @@ type Job struct {
 	cmd   *exec.Cmd
 	done  chan struct{}
 	timer *time.Timer
+	// ptmx is the controlling side of the job's pseudo-terminal (tty jobs
+	// only); copied closes once its output has been read to the end.
+	ptmx   *os.File
+	copied chan struct{}
 
 	mu       sync.Mutex
 	state    string
 	stopAs   string
 	exitCode int
 	ended    time.Time
+	cursor   int64 // where write_stdin continues reading
 }
 
 type Info struct {
@@ -67,6 +74,7 @@ type Info struct {
 	Started, Ended          time.Time
 	Timeout                 time.Duration
 	OutputBytes             int64
+	TTY                     bool
 }
 
 type StartOptions struct {
@@ -77,6 +85,9 @@ type StartOptions struct {
 	Display   string
 	Timeout   time.Duration // 0 means no limit
 	Configure func(*exec.Cmd)
+	// TTY runs the command in a pseudo-terminal whose input stays open for
+	// WriteInput (interactive programs).
+	TTY bool
 }
 
 func (m *Manager) Start(o StartOptions) (*Job, error) {
@@ -116,17 +127,38 @@ func (m *Manager) Start(o StartOptions) (*Job, error) {
 	cmd.Env = o.Env
 	cmd.Stdout = j.out
 	cmd.Stderr = j.out
-	if o.Stdin != "" {
+	if o.Stdin != "" && !o.TTY {
 		cmd.Stdin = strings.NewReader(o.Stdin)
 	}
 	if o.Configure != nil {
 		o.Configure(cmd)
 	}
+	closeChild := func() {}
+	if o.TTY {
+		ptmx, closeTTY, err := attachTTY(cmd)
+		if err != nil {
+			return nil, err
+		}
+		j.ptmx, j.copied, closeChild = ptmx, make(chan struct{}), closeTTY
+	}
 	tree, err := proc.Start(cmd)
+	closeChild() // the child has its own copy of the terminal side
 	if err != nil {
+		if j.ptmx != nil {
+			j.ptmx.Close()
+		}
 		return nil, err
 	}
 	j.cmd, j.tree, j.Started = cmd, tree, time.Now()
+	if j.ptmx != nil {
+		go func() {
+			_, _ = io.Copy(j.out, j.ptmx)
+			close(j.copied)
+		}()
+		if o.Stdin != "" {
+			_, _ = j.ptmx.Write([]byte(o.Stdin))
+		}
+	}
 	if o.Timeout > 0 {
 		j.timer = time.AfterFunc(o.Timeout, func() { j.stop(StateTimedOut) })
 	}
@@ -138,6 +170,15 @@ func (m *Manager) Start(o StartOptions) (*Job, error) {
 func (j *Job) wait() {
 	err := j.cmd.Wait()
 	j.tree.Close()
+	if j.ptmx != nil {
+		// With every process gone the terminal reports end of output;
+		// don't wait forever if a stray process still holds it.
+		select {
+		case <-j.copied:
+		case <-time.After(2 * time.Second):
+		}
+		j.ptmx.Close()
+	}
 	if j.timer != nil {
 		j.timer.Stop()
 	}
@@ -262,7 +303,7 @@ func (j *Job) Info() Info {
 	defer j.mu.Unlock()
 	return Info{
 		ID: j.ID, Command: j.Command, Dir: j.Dir, State: j.state, ExitCode: j.exitCode,
-		Started: j.Started, Ended: j.ended, Timeout: j.Timeout, OutputBytes: j.out.Total(),
+		Started: j.Started, Ended: j.ended, Timeout: j.Timeout, OutputBytes: j.out.Total(), TTY: j.ptmx != nil,
 	}
 }
 
@@ -299,4 +340,71 @@ func (j *Job) Wait(ctx context.Context, d time.Duration, tick func()) bool {
 
 func (j *Job) Read(offset int64, maxBytes int) (data []byte, next, dropped int64) {
 	return j.out.ReadFrom(offset, maxBytes)
+}
+
+// ErrNoTTY is returned when input is sent to a job without a terminal.
+var ErrNoTTY = errors.New("this job was not started with tty=true, so its input is closed; start it again with tty=true to interact with it")
+
+func (j *Job) TTY() bool { return j.ptmx != nil }
+
+// WriteInput types s into the job's terminal.
+func (j *Job) WriteInput(s string) error {
+	if j.ptmx == nil {
+		return ErrNoTTY
+	}
+	select {
+	case <-j.done:
+		return fmt.Errorf("%s has already ended", j.ID)
+	default:
+	}
+	_, err := j.ptmx.Write([]byte(s))
+	return err
+}
+
+// Interrupt sends Ctrl-C to the job's processes (for jobs without a terminal,
+// where Ctrl-C cannot be typed).
+func (j *Job) Interrupt() error { return j.tree.Interrupt() }
+
+// Cursor is the offset up to which write_stdin has returned output.
+func (j *Job) Cursor() int64 {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	return j.cursor
+}
+
+func (j *Job) SetCursor(offset int64) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	j.cursor = max(j.cursor, offset)
+}
+
+// WaitOutput waits for output beyond from and returns once it has paused for
+// idle, so interactive programs answer quickly; it also returns when the job
+// ends, d elapses or ctx is done.
+func (j *Job) WaitOutput(ctx context.Context, from int64, d, idle time.Duration) {
+	deadline := time.NewTimer(d)
+	defer deadline.Stop()
+	quiet := time.NewTimer(idle)
+	quiet.Stop() // armed once output arrives
+	defer quiet.Stop()
+	for {
+		changed, total, closed := j.out.Changed()
+		if closed {
+			return
+		}
+		if total > from {
+			quiet.Reset(idle)
+		}
+		select {
+		case <-changed:
+		case <-quiet.C:
+			return
+		case <-deadline.C:
+			return
+		case <-ctx.Done():
+			return
+		case <-j.done:
+			return
+		}
+	}
 }

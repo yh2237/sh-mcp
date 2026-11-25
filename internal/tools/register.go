@@ -59,7 +59,7 @@ func ToolNames(cfg *config.Config, git bool) []string {
 		names = append(names, "write_file", "edit_file", "delete_file", "move_file")
 	}
 	if cfg.CanExec() {
-		names = append(names, "run_command", "run_shell", "get_job_output", "kill_job", "list_jobs")
+		names = append(names, "run_command", "run_shell", "get_job_output", "write_stdin", "kill_job", "list_jobs")
 	}
 	if ProxyEnabled(cfg) {
 		names = append(names, "list_mcp_servers", "list_mcp_tools", "call_mcp_tool")

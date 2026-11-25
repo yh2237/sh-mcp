@@ -51,6 +51,16 @@ func (t *Tree) Kill() error {
 	return killTree(t.cmd, &t.plat)
 }
 
+// Interrupt sends Ctrl-C (SIGINT) to every process in the tree.
+func (t *Tree) Interrupt() error {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	if t.cmd.Process == nil || t.closed {
+		return nil
+	}
+	return interruptTree(t.cmd, &t.plat)
+}
+
 // Close kills any processes still left in the tree (for example background
 // jobs started by a shell script) and releases OS resources. Call it after
 // Wait returns.

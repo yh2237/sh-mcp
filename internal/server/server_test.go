@@ -663,6 +663,14 @@ func TestReadLargeFileStopsAfterRange(t *testing.T) {
 	}
 }
 
+func TestTTYNotOnWindows(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("terminal sessions are tested in tty_test.go")
+	}
+	h := newHarness(t, config.ModeFull, nil)
+	h.fail("run_command", map[string]any{"command": "cmd", "tty": true}, "not supported on Windows")
+}
+
 func TestReadManyFiles(t *testing.T) {
 	h := newHarness(t, config.ModeRead, nil)
 	for name, content := range map[string]string{"a.txt": "alpha\n", "b.txt": "beta\n"} {

@@ -20,9 +20,10 @@ var (
 // operations must go through the *os.Root returned by Resolve, which rejects
 // ".." and symlink escapes atomically at open time (no check-then-use race).
 type Guard struct {
-	roots []rootEntry // sorted longest dir first so nested roots win
-	deny  []string
-	def   string
+	roots  []rootEntry // sorted longest dir first so nested roots win
+	deny   []string
+	except []string
+	def    string
 }
 
 type rootEntry struct {
@@ -37,11 +38,20 @@ type Resolved struct {
 	Rel     string   // path relative to RootDir; "." for the root itself
 }
 
+// NewGuard confines access to dirs. A deny glob starting with "!" exempts
+// matching paths from the other deny globs.
 func NewGuard(dirs, denyGlobs []string) (*Guard, error) {
 	if len(dirs) == 0 {
 		return nil, errors.New("no allowed directories")
 	}
-	g := &Guard{deny: denyGlobs, def: filepath.Clean(dirs[0])}
+	g := &Guard{def: filepath.Clean(dirs[0])}
+	for _, pat := range denyGlobs {
+		if ex, ok := strings.CutPrefix(pat, "!"); ok {
+			g.except = append(g.except, ex)
+		} else {
+			g.deny = append(g.deny, pat)
+		}
+	}
 	for _, d := range dirs {
 		d = filepath.Clean(d)
 		r, err := os.OpenRoot(d)
@@ -108,8 +118,12 @@ func (g *Guard) IsDenied(abs string) bool { return g.isDenied(abs) }
 // name) and fall back to IsDenied for symlinks, avoiding a syscall per file.
 func (g *Guard) DeniedName(abs string) bool {
 	n := filepath.ToSlash(abs)
-	for _, pat := range g.deny {
-		if MatchGlob(pat, n) {
+	return matchAny(g.deny, n) && !matchAny(g.except, n)
+}
+
+func matchAny(patterns []string, name string) bool {
+	for _, pat := range patterns {
+		if MatchGlob(pat, name) {
 			return true
 		}
 	}

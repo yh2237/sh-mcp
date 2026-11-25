@@ -71,6 +71,9 @@ func (c *Config) CanExec() bool  { return c.Mode == ModeOps || c.Mode == ModeFul
 var defaultDenyGlobs = []string{
 	"**/.env",
 	"**/.env.*",
+	"!**/.env.example",
+	"!**/.env.sample",
+	"!**/.env.template",
 	"**/*.pem",
 	"**/*.key",
 	"**/*id_rsa*",
@@ -105,10 +108,10 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 	b.str(&c.Mode, "mode", `what the agent may do: "read" (read files), "ops" (read files, run --allow-command programs) or "full" (write files, run any command and shell scripts)`)
 	b.list(&c.AllowedDirs, "allow-dir", false, "directory the tools may access (repeatable; required for http, default for stdio: working directory)")
 	b.list(&c.AllowedCommands, "allow-command", false, "program run_command may start in --mode ops (repeatable)")
-	b.list(&c.DenyGlobs, "deny-glob", true, "additional glob of files the file tools must not touch (repeatable; added to the defaults)")
+	b.list(&c.DenyGlobs, "deny-glob", true, "additional glob of files the file tools must not touch, or with a leading ! files to exempt (repeatable; added to the defaults)")
 	b.int64(&c.MaxFileBytes, "max-file-bytes", "largest file the file tools read, write or search (text and images)")
 	b.fields(&c.Shell, "shell", `shell command line run_shell appends the script to, e.g. "/bin/bash -c" (default: /bin/sh -c, or PowerShell on Windows)`)
-	b.list(&c.EnvPassthrough, "env-passthrough", false, "extra environment variable passed to commands and MCP servers (repeatable)")
+	b.list(&c.EnvPassthrough, "env-passthrough", false, "extra environment variable passed to commands and MCP servers; NAME* passes every variable starting with NAME (repeatable)")
 	b.list(&mcpServers, "mcp-server", false, `stdio MCP server the agent may use through sh-mcp, as name=command line, e.g. "github=npx -y @modelcontextprotocol/server-github" (repeatable)`)
 
 	b.str(&c.Listen, "listen", "serve HTTP on this address, e.g. "+DefaultListen)

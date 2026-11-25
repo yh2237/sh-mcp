@@ -1,15 +1,32 @@
 ﻿package tools
 
 import (
+	"bufio"
 	"context"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/yh2237/sh-mcp/internal/config"
 	"github.com/yh2237/sh-mcp/internal/security"
 )
+
+func TestReadLineTruncatesOnUTF8Boundary(t *testing.T) {
+	br := bufio.NewReader(strings.NewReader(strings.Repeat("あ", 10) + "\n"))
+	line, err := readLine(br, 10)
+	if err != nil {
+		t.Fatalf("readLine: %v", err)
+	}
+	if !utf8.Valid(line) {
+		t.Fatalf("truncated line is not valid UTF-8: %q", line)
+	}
+	want := "あああ …[line truncated]"
+	if string(line) != want {
+		t.Fatalf("got %q, want %q", string(line), want)
+	}
+}
 
 func TestSearchMaxResultsClampsToUpperLimit(t *testing.T) {
 	dir := t.TempDir()

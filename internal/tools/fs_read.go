@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
@@ -224,7 +225,7 @@ func (d *Deps) readOne(ctx context.Context, p string, outside bool, startLine, e
 		end = start + defaultReadLines - 1
 	}
 
-	// The total line count is reported for files up to --max-file-bytes; for
+	// The total line count is reported for files up to maxFileBytes; for
 	// larger ones (logs) reading stops after the requested range.
 	countAll := info.Size() <= maxFileBytes
 	var out strings.Builder
@@ -311,6 +312,13 @@ func readLine(br *bufio.Reader, limit int) ([]byte, error) {
 		}
 		line = bytes.TrimRight(line, "\r\n")
 		if truncated {
+			cut := len(line)
+			for cut > 0 && !utf8.RuneStart(line[cut-1]) {
+				cut--
+			}
+			if cut > 0 && !utf8.FullRune(line[cut-1:]) {
+				line = line[:cut-1]
+			}
 			line = append(line, " …[line truncated]"...)
 		}
 		return line, err

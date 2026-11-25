@@ -82,6 +82,17 @@ var (
 	execAnn     = &mcp.ToolAnnotations{ReadOnlyHint: false, DestructiveHint: boolPtr(true), OpenWorldHint: boolPtr(true)}
 )
 
+// redactedError is returned to the caller in full but recorded in the audit
+// log as audit only, for errors that may repeat what was sent (a downstream
+// server echoing an argument value).
+type redactedError struct {
+	err   error
+	audit string
+}
+
+func (e *redactedError) Error() string { return e.err.Error() }
+func (e *redactedError) Unwrap() error { return e.err }
+
 type handler[In any] func(ctx context.Context, req *mcp.CallToolRequest, in In) ([]mcp.Content, error)
 
 type textHandler[In any] func(ctx context.Context, req *mcp.CallToolRequest, in In) (string, error)
@@ -120,6 +131,9 @@ func addContentTool[In any](s *mcp.Server, d *Deps, t *mcp.Tool, summarize func(
 		}
 		if err != nil {
 			e.Err = err.Error()
+			if r, ok := errors.AsType[*redactedError](err); ok {
+				e.Err = r.audit
+			}
 		}
 		d.Audit.Record(e)
 		if err != nil {

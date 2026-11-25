@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -88,6 +89,25 @@ func TestMCPRelayConfigured(t *testing.T) {
 	h.fail("call_mcp_tool", map[string]any{"server": "nope", "tool": "echo"}, "no MCP server")
 	if out := h.ok("list_mcp_servers", nil); !strings.Contains(out, "down: running") || !strings.Contains(out, "test-downstream") {
 		t.Errorf("after use: %s", out)
+	}
+}
+
+func TestMCPRelayErrorsNotAudited(t *testing.T) {
+	argv := testServerArgv(t)
+	auditLog := filepath.Join(t.TempDir(), "audit.jsonl")
+	h := newHarness(t, config.ModeRead, func(c *config.Config) {
+		c.MCPServers = []config.MCPServer{{Name: "down", Argv: argv}}
+		c.AuditLog = auditLog
+	})
+	// The caller sees the downstream error; the audit log does not, as it
+	// may repeat argument values.
+	h.fail("call_mcp_tool", map[string]any{"server": "down", "tool": "fail"}, "downstream broke")
+	data, err := os.ReadFile(auditLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(data), "downstream broke") || !strings.Contains(string(data), "details not logged") {
+		t.Errorf("audit log: %s", data)
 	}
 }
 

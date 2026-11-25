@@ -196,7 +196,7 @@ func (d *Deps) mcpCallTool(ctx context.Context, req *mcp.CallToolRequest, in mcp
 		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return nil, fmt.Errorf("%s/%s did not answer within %s", in.Server, in.Tool, mcpCallTimeout)
 		}
-		return nil, fmt.Errorf("%s/%s: %w", in.Server, in.Tool, err)
+		return nil, &redactedError{fmt.Errorf("%s/%s: %w", in.Server, in.Tool, err), fmt.Sprintf("%s/%s failed (details not logged)", in.Server, in.Tool)}
 	}
 	content := relayContent(res)
 	if res.IsError {
@@ -206,7 +206,7 @@ func (d *Deps) mcpCallTool(ctx context.Context, req *mcp.CallToolRequest, in mcp
 				msg.WriteString(t.Text)
 			}
 		}
-		return nil, fmt.Errorf("%s/%s returned an error: %s", in.Server, in.Tool, msg.String())
+		return nil, &redactedError{fmt.Errorf("%s/%s returned an error: %s", in.Server, in.Tool, msg.String()), fmt.Sprintf("%s/%s returned an error (details not logged)", in.Server, in.Tool)}
 	}
 	return content, nil
 }

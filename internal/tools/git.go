@@ -29,14 +29,32 @@ const (
 	maxLogCount     = 200
 )
 
-// gitSafety disables the repository settings that make read-only commands
-// run other programs. Command-line -c overrides the repository's config and
-// is inherited by git's subprocesses.
-var gitSafety = []string{"--no-pager", "-c", "core.fsmonitor=false", "-c", "core.quotePath=false", "-c", "color.ui=false"}
+// gitSafety overrides the repository settings that would make read-only
+// commands run other programs, write to the repository, use the network or
+// change the output format the filters below parse. Command-line -c wins over
+// the repository's config and is inherited by git's subprocesses.
+var gitSafety = []string{
+	"--no-pager",
+	"-c", "core.fsmonitor=false",
+	"-c", "diff.autoRefreshIndex=false", // diff would otherwise rewrite the index
+	"-c", "protocol.allow=never", // no fetching, e.g. of a partial clone's missing objects
+	"-c", "core.quotePath=false",
+	"-c", "status.relativePaths=true",
+	"-c", "color.ui=false", "-c", "color.diff=false", "-c", "color.status=false",
+}
 
-// diffSafety keeps diffs from running external diff drivers and textconv
-// filters configured in the repository.
-var diffSafety = []string{"--no-ext-diff", "--no-textconv", "--relative"}
+// diffSafety keeps diffs from running external diff drivers, textconv filters
+// and inline submodule diffs (a child git that would not get these flags),
+// and fixes the format: paths relative to the directory, a/ and b/ prefixes,
+// no renames (so a protected file shows under its own name).
+var diffSafety = []string{
+	"--no-ext-diff", "--no-textconv", "--submodule=short", "--no-color",
+	"--relative", "--no-renames", "--src-prefix=a/", "--dst-prefix=b/",
+}
+
+// gitEnv completes the safety settings: optional locks would let status
+// rewrite the index, and a partial clone would fetch missing objects.
+var gitEnv = []string{"GIT_OPTIONAL_LOCKS=0", "GIT_NO_LAZY_FETCH=1"}
 
 type gitStatusInput struct {
 	Path string `json:"path,omitempty" jsonschema:"directory in the repository, absolute or relative to default_dir (default: default_dir); only changes under it are shown"`
@@ -110,12 +128,51 @@ func (d *Deps) gitTarget(p string) (dir, pathspec string, err error) {
 	return "", "", err
 }
 
-// revision rejects values git could read as options.
-func revision(name, v string) error {
+// commitRev resolves a revision to a commit id. Only commits are accepted:
+// comparing trees or blobs (HEAD:dir) gives paths relative to them, which
+// --deny-glob could not be checked against.
+func (d *Deps) commitRev(ctx context.Context, dir, name, v string) (string, error) {
 	if strings.HasPrefix(v, "-") || strings.ContainsAny(v, " \t\r\n") {
-		return fmt.Errorf("%s %q is not a revision", name, v)
+		return "", fmt.Errorf("%s %q is not a revision", name, v)
 	}
-	return nil
+	out, err := d.runGit(ctx, dir, "rev-parse", "--verify", "--quiet", "--end-of-options", v+"^{commit}")
+	id := strings.TrimSpace(out)
+	if err != nil || id == "" {
+		return "", fmt.Errorf("%s %q is not a commit", name, v)
+	}
+	return id, nil
+}
+
+// logRevision resolves a revision or range (A..B, A...B, ^A) for git log,
+// accepting only commits on either side.
+func (d *Deps) logRevision(ctx context.Context, dir, v string) (string, error) {
+	for _, sep := range []string{"...", ".."} {
+		a, b, ok := strings.Cut(v, sep)
+		if !ok {
+			continue
+		}
+		var ids [2]string
+		for i, side := range []string{a, b} {
+			if side == "" {
+				continue // an empty side means HEAD
+			}
+			id, err := d.commitRev(ctx, dir, "revision", side)
+			if err != nil {
+				return "", err
+			}
+			ids[i] = id
+		}
+		return ids[0] + sep + ids[1], nil
+	}
+	neg := ""
+	if strings.HasPrefix(v, "^") {
+		neg, v = "^", v[1:]
+	}
+	id, err := d.commitRev(ctx, dir, "revision", v)
+	if err != nil {
+		return "", err
+	}
+	return neg + id, nil
 }
 
 func (d *Deps) gitStatus(ctx context.Context, _ *mcp.CallToolRequest, in gitStatusInput) (string, error) {
@@ -123,7 +180,7 @@ func (d *Deps) gitStatus(ctx context.Context, _ *mcp.CallToolRequest, in gitStat
 	if err != nil {
 		return "", err
 	}
-	out, err := d.runGit(ctx, dir, "status", "--short", "--branch", "--untracked-files=all", "--", spec)
+	out, err := d.runGit(ctx, dir, "status", "--short", "--branch", "--untracked-files=all", "--no-renames", "--", spec)
 	if err != nil {
 		return "", err
 	}
@@ -148,23 +205,24 @@ func (d *Deps) gitStatus(ctx context.Context, _ *mcp.CallToolRequest, in gitStat
 	return gitResult(b.String(), "(no changes)"), nil
 }
 
-// statusPath returns the (new) path of a git status --short line, or false
-// for the branch line.
+// statusPath returns the path of a git status --short --no-renames line, or
+// false for the branch line.
 func statusPath(line string) (string, bool) {
 	line = strings.TrimRight(line, "\n")
 	if len(line) < 4 || strings.HasPrefix(line, "## ") {
 		return "", false
 	}
-	p := line[3:]
-	if _, after, ok := strings.Cut(p, " -> "); ok {
-		p = after
-	}
+	return unquoteGitPath(line[3:]), true
+}
+
+// unquoteGitPath undoes git's C-style quoting of unusual file names.
+func unquoteGitPath(p string) string {
 	if strings.HasPrefix(p, `"`) {
 		if u, err := strconv.Unquote(p); err == nil {
-			p = u
+			return u
 		}
 	}
-	return p, true
+	return p
 }
 
 func (d *Deps) gitDiff(ctx context.Context, _ *mcp.CallToolRequest, in gitDiffInput) (string, error) {
@@ -187,10 +245,11 @@ func (d *Deps) gitDiff(ctx context.Context, _ *mcp.CallToolRequest, in gitDiffIn
 		if rev.v == "" {
 			continue
 		}
-		if err := revision(rev.name, rev.v); err != nil {
+		id, err := d.commitRev(ctx, dir, rev.name, rev.v)
+		if err != nil {
 			return "", err
 		}
-		args = append(args, rev.v)
+		args = append(args, id)
 	}
 	out, err := d.runGit(ctx, dir, append(args, "--", spec)...)
 	if err != nil {
@@ -221,10 +280,11 @@ func (d *Deps) gitLog(ctx context.Context, _ *mcp.CallToolRequest, in gitLogInpu
 	}
 	args = append(args, "--end-of-options")
 	if in.Revision != "" {
-		if err := revision("revision", in.Revision); err != nil {
+		rev, err := d.logRevision(ctx, dir, in.Revision)
+		if err != nil {
 			return "", err
 		}
-		args = append(args, in.Revision)
+		args = append(args, rev)
 	}
 	out, err := d.runGit(ctx, dir, append(args, "--", spec)...)
 	if err != nil {
@@ -237,20 +297,27 @@ func (d *Deps) gitLog(ctx context.Context, _ *mcp.CallToolRequest, in gitLogInpu
 }
 
 // filterDiff removes the sections of files protected by --deny-glob from a
-// diff or a log -p. Paths are relative to dir because of --relative.
+// diff or a log -p. Paths are relative to dir because of --relative. A section
+// whose header cannot be parsed is left out too: failing open would show a
+// protected file whenever git prints something unexpected.
 func (d *Deps) filterDiff(dir, diff string) string {
 	var b strings.Builder
 	skipping := false
 	for _, line := range strings.SplitAfter(diff, "\n") {
 		switch {
-		case strings.HasPrefix(line, "diff --git "):
-			skipping = false
-			for _, p := range diffHeaderPaths(line) {
+		case strings.HasPrefix(line, "diff "):
+			paths, ok := diffHeaderPaths(line)
+			skipping = !ok
+			for _, p := range paths {
 				if d.Guard.IsDenied(filepath.Join(dir, filepath.FromSlash(p))) {
 					skipping = true
-					fmt.Fprintf(&b, "(diff of %s not shown: protected by --deny-glob)\n", p)
-					break
 				}
+			}
+			switch {
+			case !ok:
+				b.WriteString("(a diff section that could not be checked against --deny-glob was left out)\n")
+			case skipping:
+				b.WriteString("(diff of a file protected by --deny-glob not shown)\n")
 			}
 		case strings.HasPrefix(line, "commit "):
 			skipping = false
@@ -262,38 +329,74 @@ func (d *Deps) filterDiff(dir, diff string) string {
 	return b.String()
 }
 
-// diffHeaderPaths extracts the a/ and b/ paths of a "diff --git" line.
-func diffHeaderPaths(line string) []string {
-	rest := strings.TrimSuffix(strings.TrimPrefix(line, "diff --git "), "\n")
-	if strings.HasPrefix(rest, `"`) {
-		// Quoted names: "a/x" "b/y".
-		var out []string
-		for _, f := range strings.SplitAfter(rest, `" `) {
-			if u, err := strconv.Unquote(strings.TrimSpace(f)); err == nil {
-				out = append(out, strings.TrimPrefix(strings.TrimPrefix(u, "a/"), "b/"))
-			}
+// diffHeaderPaths extracts the paths of a "diff --git a/x b/y" line, or of a
+// combined diff of a conflict ("diff --cc x", "diff --combined x").
+func diffHeaderPaths(line string) ([]string, bool) {
+	line = strings.TrimSuffix(line, "\n")
+	for _, prefix := range []string{"diff --cc ", "diff --combined "} {
+		if rest, ok := strings.CutPrefix(line, prefix); ok {
+			return []string{unquoteGitPath(rest)}, rest != ""
 		}
-		return out
 	}
-	a, b, ok := strings.Cut(rest, " b/")
+	rest, ok := strings.CutPrefix(line, "diff --git ")
 	if !ok {
-		return nil
+		return nil, false
 	}
-	return []string{strings.TrimPrefix(a, "a/"), b}
+	if strings.HasPrefix(rest, `"`) || strings.HasSuffix(rest, `"`) {
+		// At least one name is quoted: "a/x" "b/y", "a/x" b/y or a/x "b/y".
+		var out []string
+		for _, f := range splitQuotedPair(rest) {
+			p := unquoteGitPath(f)
+			if !strings.HasPrefix(p, "a/") && !strings.HasPrefix(p, "b/") {
+				return nil, false
+			}
+			out = append(out, p[2:])
+		}
+		return out, len(out) == 2
+	}
+	// --no-renames makes both names equal: "a/<p> b/<p>".
+	if len(rest)%2 == 1 {
+		half := (len(rest) - 1) / 2
+		a, b := rest[:half], rest[half+1:]
+		if rest[half] == ' ' && strings.HasPrefix(a, "a/") && strings.HasPrefix(b, "b/") && a[2:] == b[2:] {
+			return []string{a[2:]}, true
+		}
+	}
+	return nil, false
+}
+
+// splitQuotedPair splits the two (possibly quoted) names of a diff header.
+func splitQuotedPair(s string) []string {
+	var out []string
+	for s != "" {
+		if strings.HasPrefix(s, `"`) {
+			end := 1
+			for end < len(s) && s[end] != '"' {
+				if s[end] == '\\' {
+					end++
+				}
+				end++
+			}
+			if end >= len(s) {
+				return nil
+			}
+			out = append(out, s[:end+1])
+			s = strings.TrimPrefix(s[end+1:], " ")
+			continue
+		}
+		f, rest, _ := strings.Cut(s, " ")
+		out = append(out, f)
+		s = rest
+	}
+	return out
 }
 
 func (d *Deps) filterNumstat(dir, out string) string {
 	var b strings.Builder
 	for _, line := range strings.SplitAfter(out, "\n") {
 		fields := strings.SplitN(strings.TrimRight(line, "\n"), "\t", 3)
-		if len(fields) == 3 {
-			p := fields[2]
-			if _, after, ok := strings.Cut(p, " => "); ok {
-				p = strings.NewReplacer("{", "", "}", "").Replace(after)
-			}
-			if d.Guard.IsDenied(filepath.Join(dir, filepath.FromSlash(p))) {
-				continue
-			}
+		if len(fields) == 3 && d.Guard.IsDenied(filepath.Join(dir, filepath.FromSlash(unquoteGitPath(fields[2])))) {
+			continue // --no-renames: one path per line
 		}
 		b.WriteString(line)
 	}
@@ -323,8 +426,7 @@ func (d *Deps) runGit(ctx context.Context, dir string, args ...string) (string, 
 	defer cancel()
 	cmd := exec.CommandContext(ctx, d.Git, append(append([]string(nil), gitSafety...), args...)...)
 	cmd.Dir = dir
-	// Optional locks would let status rewrite the index.
-	cmd.Env = append(d.Cmd.Env(), "GIT_OPTIONAL_LOCKS=0")
+	cmd.Env = append(d.Cmd.Env(), gitEnv...)
 	stdout := &capWriter{max: gitMaxOutput}
 	stderr := &capWriter{max: 8 << 10}
 	cmd.Stdout, cmd.Stderr = stdout, stderr

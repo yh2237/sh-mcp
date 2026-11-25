@@ -22,6 +22,7 @@
 | `list_mcp_servers` / `list_mcp_tools` | ※ | ○ | ○ | 中継先 MCP サーバーの一覧（※ `--mcp-server` 指定時） |
 | `call_mcp_tool` | ※（読み取り専用のツールのみ） | △（読み取り専用のツールは ○） | ○ | 中継先 MCP サーバーのツール呼び出し |
 | `start_mcp_server` / `stop_mcp_server` | — | △ | ○ | 中継先 MCP サーバーの起動・停止 |
+| `update_sh_mcp` | — | △ | ○ | sh-mcp 自身を最新リリースへ更新（`restart: true` で更新後に終了し再起動を促す） |
 
 ## ファイルの読み取り・検索
 
@@ -136,3 +137,7 @@ write_stdin  {"job_id": "job-1", "input": "\u0003"}               ← Ctrl-C
 * `list_mcp_tools`: `server` のツール一覧（未起動なら起動）
 * `call_mcp_tool`: `server`、`tool`、`arguments`。120 秒でタイムアウトします。中継先のサーバーが読み取り専用の印（`readOnlyHint`）を付けていないツールは、`read` では呼べず、`ask` では承認が要ります。
 * `start_mcp_server` / `stop_mcp_server`（`read` 以外）: `server`、`command`、`args`、`cwd` で起動し、`server` を指定して停止します。
+
+## 自己更新（`ask` / `full`）
+
+* `update_sh_mcp`: GitHub Releases の最新リリースを `SHA256SUMS` で検証してバイナリを差し替えます。`restart: true` を指定すると、更新した場合に限り応答を返したあと少し待ってから終了コード `75` で終了し、systemd（`Restart=on-failure`）などのサービス管理による再起動を促します。すでに最新版だった場合は終了しません。

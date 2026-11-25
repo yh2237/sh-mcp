@@ -18,7 +18,7 @@
 | `run_shell` | — | △ | ○ | シェルスクリプト実行 |
 | `get_job_output` / `kill_job` / `list_jobs` | — | ○ | ○ | バックグラウンドジョブの操作 |
 | `list_mcp_servers` / `list_mcp_tools` | ※ | ○ | ○ | 中継先 MCP サーバーの一覧（※ `--mcp-server` 指定時） |
-| `call_mcp_tool` | ※ | △（読み取り専用のツールは ○） | ○ | 中継先 MCP サーバーのツール呼び出し |
+| `call_mcp_tool` | ※（読み取り専用のツールのみ） | △（読み取り専用のツールは ○） | ○ | 中継先 MCP サーバーのツール呼び出し |
 | `start_mcp_server` / `stop_mcp_server` | — | △ | ○ | 中継先 MCP サーバーの起動・停止 |
 
 ## ファイルの読み取り・検索
@@ -31,7 +31,7 @@
 | `start_line` | `int` | — | 開始行（既定 `1`） |
 | `end_line` | `int` | — | 終了行（既定 `start_line + 1999`） |
 
-1 回で最大 2,000 行・256 KiB を返します。PNG / JPEG / GIF / WebP は画像として返し、その他のバイナリはエラーです。
+1 回で最大 2,000 行・256 KiB を返します。総行数は `--max-file-bytes` 以下のファイルでだけ数え、それより大きいファイル（ログなど）は指定範囲まで読んで止めます。PNG / JPEG / GIF / WebP は画像として返し、その他のバイナリはエラーです。
 
 ### `list_dir`
 
@@ -81,7 +81,7 @@
 ### `delete_file` / `move_file`
 
 * `delete_file`: `path`、`recursive`（中身ごと削除）。保護されたファイルを含むディレクトリは削除できません。
-* `move_file`: `source`、`destination`、`overwrite`（既存ファイルを上書き）。同じ `--allow-dir` の中でのみ移動できます。
+* `move_file`: `source`、`destination`、`overwrite`（既存ファイルを上書き）。同じ `--allow-dir` の中でのみ移動でき、保護されたファイルを含むディレクトリは移動できません。
 
 ## コマンド実行（`ask` / `full`）
 
@@ -108,5 +108,5 @@
 
 * `list_mcp_servers`: 中継先サーバーの一覧と状態
 * `list_mcp_tools`: `server` のツール一覧（未起動なら起動）
-* `call_mcp_tool`: `server`、`tool`、`arguments`。120 秒でタイムアウトします。
+* `call_mcp_tool`: `server`、`tool`、`arguments`。120 秒でタイムアウトします。中継先のサーバーが読み取り専用の印（`readOnlyHint`）を付けていないツールは、`read` では呼べず、`ask` では承認が要ります。
 * `start_mcp_server` / `stop_mcp_server`（`read` 以外）: `server`、`command`、`args`、`cwd` で起動し、`server` を指定して停止します。

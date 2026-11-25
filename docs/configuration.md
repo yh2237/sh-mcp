@@ -13,7 +13,6 @@
 | `--auto-approve-command` | `SH_MCP_AUTO_APPROVE_COMMAND` | なし | `ask` で承認なしに実行できるプログラム（複数可、`ask` でのみ指定） |
 | `--deny-glob` | `SH_MCP_DENY_GLOB` | 後述 | ファイル操作ツールから保護する glob（複数可）。先頭 `!` で例外 |
 | `--max-file-bytes` | `SH_MCP_MAX_FILE_BYTES` | 5 MiB | 読み書き・検索するファイルのサイズ上限 |
-| `--shell` | `SH_MCP_SHELL` | Unix: `/bin/sh -c` / Windows: PowerShell | `run_shell` が使うシェル |
 | `--env-passthrough` | `SH_MCP_ENV_PASSTHROUGH` | なし | コマンド・MCP サーバーに追加で渡す環境変数（複数可、末尾 `*` で前方一致） |
 | `--mcp-server` | `SH_MCP_MCP_SERVER` | なし | 中継する stdio MCP サーバー（`name=command args...`、複数可） |
 
@@ -23,14 +22,12 @@
 | :--- | :--- | :--- | :--- |
 | `--listen` | `SH_MCP_LISTEN` | なし | 指定すると HTTP で待ち受け（例: `127.0.0.1:8080`） |
 | `--public-url` | `SH_MCP_PUBLIC_URL` | なし | 公開 URL（例: `https://mcp.example.com`）。HTTP と OAuth を有効化 |
-| `--auth-token-file` | `SH_MCP_AUTH_TOKEN_FILE` | なし | 認証トークンを読むファイル |
-| `--insecure-no-auth` | `SH_MCP_INSECURE_NO_AUTH` | `false` | 認証なしの HTTP を許可（検証用） |
 | `--audit-log` | `SH_MCP_AUDIT_LOG` | stderr | 監査ログ（JSONL）の出力先 |
 | `--version` / `--gen-token` / `--update` | — | — | バージョン表示 / 認証トークン生成 / 最新リリースへの更新 |
 
 ## 認証トークン
 
-HTTP では 16 文字以上のトークンが必須です。`ps` で見えないよう CLI 引数では受け付けず、`$SH_MCP_AUTH_TOKEN` か `--auth-token-file` のどちらかで渡します。
+HTTP では 16 文字以上のトークンが必須です。`ps` で見えないよう CLI 引数では受け付けず、`$SH_MCP_AUTH_TOKEN` で渡します。
 
 ## 既定の `--deny-glob`
 

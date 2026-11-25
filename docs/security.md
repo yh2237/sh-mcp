@@ -1,55 +1,50 @@
 # セキュリティ・OAuth・監査ログ
 
-## 1. パス隔離
+## 1. ファイルアクセス
 
-* 起動時に各 `--allow-dir` を `os.OpenRoot` で開き、すべてのファイル操作を `*os.Root` 経由で行います。`..` やシンボリックリンクによるルート外脱出をオープン時に拒否し、TOCTOU 競合を防ぎます。
-* `--deny-glob` は要求パスとシンボリックリンクの実体パス（未作成ファイルは最も深い既存親ディレクトリ）の両方に適用されます。`!` で始まる例外パターンに一致するパスは保護対象から外れます。
-* `--deny-glob` が守るのは sh-mcp のファイル操作ツールだけです。`full` モードのコマンドや許可したプログラムは、プロセスの権限で読めるファイルをすべて読めます。
-* Windows では UNC パス、ドライブ相対パス、NTFS 代替データストリーム（`:`）を拒否します。
-* HTTP モードでは `--allow-dir` 未指定のまま起動できません（`systemd` の `/` 起動事故防止）。
+* ファイル操作は `--allow-dir` の中に限られ、`..` やシンボリックリンクで外に出ることはできません。
+* `--deny-glob` はシンボリックリンクのリンク先にも適用されます。
+* Windows では UNC パス・ドライブ相対パス・代替データストリーム（`:`）を拒否します。
+* `--deny-glob` が守るのはファイル操作ツールだけです。`full` モードのコマンドや `ops` で許可したプログラムは、プロセスの権限で読めるファイルをすべて読めます。
 
-## 2. コマンド実行・環境変数
+## 2. コマンド実行
 
-* `ops` モードの `--allow-command` は起動時に `exec.LookPath` で絶対パスへ固定し、実行時の `PATH` すり替えを防ぎます。
-* `ops` モードで制限されるのは「どのプログラムを起動できるか」だけで、引数は制限しません。「ファイル変更不可・シェル不可」は sh-mcp のツールについての制限で、許可したプログラム自身の動作は防げません。そのため、引数次第で任意のコードを実行したりファイルを書き換えたりできるプログラムは許可しないでください。
-  * 例: `git`（`-c core.pager=…`、`-c alias.x='!cmd'`、`--upload-pack` 等で任意コマンドを実行でき、`checkout` や `config` でファイルも変更可能）、`docker`（実質 root 権限）、シェル・各種インタプリタ（`python`, `node` 等）、`find`（`-exec`）、`xargs`、`env`、`make`、`go`、`npm`
+* `--allow-command` は起動時に絶対パスへ解決し、後から `PATH` で差し替えられないようにします。
+* `ops` で制限するのは起動できるプログラムだけで、引数は制限しません。引数次第で任意のコードを実行できるプログラムは許可しないでください。
+  * 例: `git`（`-c core.pager=…` や `--upload-pack` で任意コマンドを実行でき、ファイルも変更できる）、`docker`（実質 root）、シェル、インタプリタ、`find`、`xargs`、`env`、`make`、`go`、`npm`
   * 向いているのは `df`, `free`, `uptime`, `journalctl` のような参照系のプログラムです。
-* `run_command` は `exec.CommandContext` で直接実行します。シェルを介する `run_shell` は `full` モードのみ有効です。
-* 子プロセスには基本リスト（ツールチェーンの場所・プロキシ等。プロキシ URL に認証情報を埋め込んでいる場合を除き秘密情報は含まない）＋`--env-passthrough` のみ渡し、`SH_MCP_AUTH_TOKEN` は前方一致の指定でも必ず除外します。
-* タイムアウト・キャンセル・`kill_job`・終了時はプロセスツリーごと終了します（Unix: プロセスグループ、Windows: Job Object）。
+* タイムアウト・`kill_job`・終了時は、子プロセスも含めてまとめて終了します。
 
-## 3. HTTP 保護
+## 3. HTTP
 
-* HTTP モードは 16 文字以上の認証トークンが必須です（`--insecure-no-auth` 指定時を除く）。
-* 静的 Bearer トークンは SHA-256 後に `crypto/subtle.ConstantTimeCompare` で検証します。
-* `--public-url` 指定時は `CheckHost` で公開ホスト名・ループバック以外の `Host` ヘッダーを `403` 拒否します。
-* `/mcp` と `POST /oauth/authorize` に `http.NewCrossOriginProtection()` を適用します。
+* HTTP では 16 文字以上の認証トークンが必須です（`--insecure-no-auth` を除く）。
+* `--public-url` を指定すると、そのホスト名とループバック以外の `Host` ヘッダーを拒否します。
+* ブラウザからのクロスオリジンのリクエストは拒否します。
 
-## 4. 内蔵 OAuth 2.1 認可サーバー
+## 4. OAuth
 
-`--public-url` と認証トークンの両方が設定されている場合、単一オーナー向けの OAuth 2.1 認可サーバーが自動起動します。
+`--public-url` と認証トークンを設定すると、OAuth 2.1 の認可サーバーが有効になります。クライアントは動的に登録され（DCR）、同意画面で `SH_MCP_AUTH_TOKEN` を入力すると接続が許可されます。
 
 | エンドポイント | 役割 |
 | :--- | :--- |
-| `GET /.well-known/oauth-protected-resource`（および `/mcp` 配下） | Protected Resource Metadata（RFC 9728） |
-| `GET /.well-known/oauth-authorization-server` | Authorization Server Metadata（RFC 8414） |
-| `POST /oauth/register` | 動的クライアント登録（RFC 7591） |
-| `GET` / `POST /oauth/authorize` | 同意画面（PKCE `S256` 必須、失敗 5 回/分でレート制限） |
-| `POST /oauth/token` | `authorization_code`（1 回限り・2 分有効） / `refresh_token` |
-| `POST /oauth/revoke` | トークン失効（RFC 7009） |
+| `/.well-known/oauth-protected-resource`, `/.well-known/oauth-authorization-server` | メタデータ |
+| `/oauth/register` | クライアント登録 |
+| `/oauth/authorize` | 同意画面（PKCE 必須、失敗は 1 分に 5 回まで） |
+| `/oauth/token` | トークン発行・更新 |
+| `/oauth/revoke` | トークン失効 |
 
-* 登録クライアント・認可コード・アクセストークン（1 時間有効）・リフレッシュトークンは、`SH_MCP_AUTH_TOKEN` から HKDF-SHA256 で導出した鍵による HMAC-SHA256 署名でディスクレス管理します。`SH_MCP_AUTH_TOKEN` を変更して再起動すると全トークンが一括失効します。
-* Gemini クライアント互換のため、`refresh_token` グラント時はリフレッシュトークンをローテーションしません。リフレッシュトークンに有効期限はありません。
-* `POST /oauth/revoke` による失効と使用済み認可コードはメモリ上でのみ管理するため、再起動すると失効の記録は消え、失効させたトークンも再び使えるようになります。確実に失効させるには `SH_MCP_AUTH_TOKEN` を差し替えて再起動してください。
-* OAuth 有効時でも `Authorization: Bearer <SH_MCP_AUTH_TOKEN>` での直接アクセスを併用できます。
+* トークン類は `SH_MCP_AUTH_TOKEN` から作った鍵で署名し、サーバーには保存しません。再起動後もそのまま使えます。
+* アクセストークンは 1 時間有効です。リフレッシュトークンは期限がなく、更新しても変わりません（Gemini との互換のため）。
+* `/oauth/revoke` による失効は再起動すると消えます。確実に失効させるには `SH_MCP_AUTH_TOKEN` を差し替えて再起動します（全トークンが無効になります）。
+* OAuth を有効にしても、`Authorization: Bearer <SH_MCP_AUTH_TOKEN>` で直接接続できます。
 
 ## 5. 監査ログ
 
-全ツール呼び出しを JSONL 形式で出力します（`--audit-log` 未指定時は `stderr`）。
+全ツール呼び出しを JSONL で記録します（`--audit-log` 未指定時は stderr）。
 
 ```json
 {"time":"2026-11-25T09:00:00Z","level":"INFO","msg":"tool_call","event":"tool_call","tool":"write_file","args_summary":{"bytes":128,"path":"main.go","sha256":"a1b2c3d4e5f60708"},"duration_ms":2,"ok":true,"client":"oauth:Gemini#1234abcd"}
 ```
 
-* `write_file` は本文を記録せずバイト数と SHA-256 先頭 16 桁のみ、`call_mcp_tool` は引数の値ではなくキー名のみを記録します。
-* ログファイルは `0600` で作成され、`SIGHUP` でファイルハンドルを再オープンします。
+* ファイル本文や `call_mcp_tool` の引数の値は記録しません（サイズ・ハッシュ・キー名のみ）。
+* ログファイルは `0600` で作成し、`SIGHUP` で開き直します。

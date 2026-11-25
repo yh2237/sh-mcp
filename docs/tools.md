@@ -1,75 +1,72 @@
 # ツール仕様
 
-公開ツールは `--mode` と `--mcp-server` に応じて決まります。パス引数はすべて絶対パスまたは `default_dir` からの相対パスを受け付けます。
+使えるツールは `--mode` と `--mcp-server` で決まります。パスは絶対パスか、`default_dir`（先頭の `--allow-dir`）からの相対パスで指定します。
 
-## モード別の公開ツール
+## モード別のツール
 
 | ツール | `read` | `ops` | `full` | 概要 |
 | :--- | :---: | :---: | :---: | :--- |
-| `get_environment` | ○ | ○ | ○ | OS・許可パス・モード・`PATH` 上の主要ツール一覧 |
-| `read_file` | ○ | ○ | ○ | 行番号付きテキスト読み取り・画像返却 |
-| `list_dir` | ○ | ○ | ○ | ディレクトリツリー一覧 |
-| `search_files` | ○ | ○ | ○ | RE2 正規表現検索・glob ファイル一覧 |
-| `write_file` | — | — | ○ | 新規作成・全文上書き（アトミック） |
-| `edit_file` | — | — | ○ | 複数箇所の完全一致置換＋diff 返却 |
-| `delete_file` | — | — | ○ | ファイル・ディレクトリ削除 |
-| `move_file` | — | — | ○ | 同一許可ルート内の移動・リネーム |
-| `run_command` | — | ○（許可のみ） | ○ | シェルを介さない直接コマンド実行 |
+| `get_environment` | ○ | ○ | ○ | OS・許可ディレクトリ・モード・使えるツールの一覧 |
+| `read_file` | ○ | ○ | ○ | 行番号付きで読む（画像も可） |
+| `list_dir` | ○ | ○ | ○ | ディレクトリの一覧 |
+| `search_files` | ○ | ○ | ○ | 正規表現で検索、glob でファイル一覧 |
+| `write_file` | — | — | ○ | 新規作成・全文上書き |
+| `edit_file` | — | — | ○ | 文字列を置換して diff を返す |
+| `delete_file` | — | — | ○ | ファイル・ディレクトリの削除 |
+| `move_file` | — | — | ○ | 移動・名前変更 |
+| `run_command` | — | ○（許可分のみ） | ○ | シェルを介さずコマンド実行 |
 | `run_shell` | — | — | ○ | シェルスクリプト実行 |
-| `get_job_output` | — | ○ | ○ | バックグラウンドジョブの出力取得・完了待ち |
-| `kill_job` | — | ○ | ○ | ジョブと子プロセスツリーの強制終了 |
-| `list_jobs` | — | ○ | ○ | 実行中・最近終了したジョブ一覧 |
-| `list_mcp_servers` / `list_mcp_tools` / `call_mcp_tool` | ※ | ※ | ○ | 下流 MCP サーバーの参照・実行（※`--mcp-server` 指定時） |
-| `start_mcp_server` / `stop_mcp_server` | — | — | ○ | stdio MCP サーバーの動的起動・停止 |
+| `get_job_output` / `kill_job` / `list_jobs` | — | ○ | ○ | バックグラウンドジョブの操作 |
+| `list_mcp_servers` / `list_mcp_tools` / `call_mcp_tool` | ※ | ※ | ○ | 中継先 MCP サーバーの利用（※ `--mcp-server` 指定時） |
+| `start_mcp_server` / `stop_mcp_server` | — | — | ○ | 中継先 MCP サーバーの起動・停止 |
 
-## ファイル読み取り・検索
+## ファイルの読み取り・検索
 
 ### `read_file`
 
 | パラメータ | 型 | 必須 | 説明 |
 | :--- | :--- | :---: | :--- |
-| `path` | `string` | ○ | ファイルパス |
-| `start_line` | `int` | — | 開始行（1 始まり、既定 `1`） |
-| `end_line` | `int` | — | 終了行（両端含む、既定 `start_line + 1999`） |
+| `path` | `string` | ○ | ファイル |
+| `start_line` | `int` | — | 開始行（既定 `1`） |
+| `end_line` | `int` | — | 終了行（既定 `start_line + 1999`） |
 
-* 1 回あたり最大 2,000 行・256 KiB、1 行 2,000 文字で切り詰めます。
-* PNG / JPEG / GIF / WebP は `ImageContent` で返却します（`--max-file-bytes` 以内）。その他のバイナリはエラーになります。
+1 回で最大 2,000 行・256 KiB を返します。PNG / JPEG / GIF / WebP は画像として返し、その他のバイナリはエラーです。
 
 ### `list_dir`
 
 | パラメータ | 型 | 必須 | 説明 |
 | :--- | :--- | :---: | :--- |
-| `path` | `string` | — | 対象ディレクトリ（既定 `default_dir`） |
-| `depth` | `int` | — | 探索深さ `1`〜`10`（既定 `1`） |
-| `include_hidden` | `bool` | — | `.` 始まりを含めるか（既定 `false`） |
+| `path` | `string` | — | ディレクトリ（既定 `default_dir`） |
+| `depth` | `int` | — | 深さ `1`〜`10`（既定 `1`） |
+| `include_hidden` | `bool` | — | `.` で始まる項目も含める |
 
-* 最大 1,000 エントリで打ち切り、`--deny-glob` 一致分は除外します。
+最大 1,000 件です。
 
 ### `search_files`
 
 | パラメータ | 型 | 必須 | 説明 |
 | :--- | :--- | :---: | :--- |
-| `pattern` | `string` | ※ | RE2 正規表現（`glob` とどちらか必須） |
-| `path` | `string` | — | 対象ディレクトリまたはファイル（既定 `default_dir`） |
-| `glob` | `string` | ※ | 相対パスフィルタ（例: `*.go`, `src/**/*.ts`） |
-| `case_insensitive` | `bool` | — | 大文字・小文字を無視 |
-| `context_lines` | `int` | — | 前後コンテキスト行数（`0`〜`10`） |
-| `max_results` | `int` | — | 最大返却件数（既定 `200`、上限 `2000`） |
-| `respect_gitignore` | `bool` | — | `.gitignore` を除外（既定 `true`） |
+| `pattern` | `string` | ※ | 正規表現（RE2）。`glob` とどちらかが必須 |
+| `path` | `string` | — | 検索するディレクトリかファイル（既定 `default_dir`） |
+| `glob` | `string` | ※ | 対象ファイルの絞り込み（例: `*.go`, `src/**/*.ts`） |
+| `case_insensitive` | `bool` | — | 大文字・小文字を区別しない |
+| `context_lines` | `int` | — | 前後に表示する行数（`0`〜`10`） |
+| `max_results` | `int` | — | 最大件数（既定 `200`、上限 `2000`） |
+| `respect_gitignore` | `bool` | — | `.gitignore` の対象を除く（既定 `true`） |
 
-* `pattern` 省略時は `glob` 一致ファイル名一覧を返します。`.git`、バイナリ、`--max-file-bytes` 超過、`--deny-glob` 一致パスは除外します。
+`pattern` を省くと `glob` に一致するファイル名の一覧を返します。`.git` とバイナリファイルは対象外です。
 
-## ファイル編集・管理（`full` のみ）
+## ファイルの編集（`full` のみ）
 
 ### `write_file`
 
 | パラメータ | 型 | 必須 | 説明 |
 | :--- | :--- | :---: | :--- |
-| `path` | `string` | ○ | 書き込み先（許可ルート自体は不可） |
-| `content` | `string` | ○ | 全文（`--max-file-bytes` 以内） |
-| `create_dirs` | `bool` | — | 親ディレクトリを作成するか |
+| `path` | `string` | ○ | 書き込み先 |
+| `content` | `string` | ○ | ファイルの全文 |
+| `create_dirs` | `bool` | — | 親ディレクトリがなければ作る |
 
-* 一時ファイル経由の `fsync`＋`rename` でアトミックに書き込み、既存パーミッションを維持します（シンボリックリンクはリンク維持のまま上書き）。
+書き込みはアトミックで、既存ファイルのパーミッションを保ちます。
 
 ### `edit_file`
 
@@ -78,37 +75,37 @@
 | `path` | `string` | ○ | 対象ファイル |
 | `edits` | `[]object` | ○ | `{old_text, new_text, replace_all?}` の配列 |
 
-* `replace_all` が `false` のとき `old_text` はちょうど 1 回一致する必要があります。1 つでも失敗するとファイルは変更されません。改行コード（LF / CRLF）と UTF-8 BOM を維持します。
+`replace_all` がなければ `old_text` はちょうど 1 か所に一致する必要があります。1 つでも失敗するとファイルは変更されません。改行コードと BOM は保たれます。
 
 ### `delete_file` / `move_file`
 
-* `delete_file`: `path`（必須）、`recursive`（非空ディレクトリ削除）。`recursive: true` 時は配下に `--deny-glob` 保護ファイルが 1 つでもあれば拒否します。
-* `move_file`: `source`（必須）、`destination`（必須、親ディレクトリ必須）、`overwrite`（既存ファイル上書き可、既存ディレクトリ不可）。同一許可ルート内のみ有効です。
+* `delete_file`: `path`、`recursive`（中身ごと削除）。保護されたファイルを含むディレクトリは削除できません。
+* `move_file`: `source`、`destination`、`overwrite`（既存ファイルを上書き）。同じ `--allow-dir` の中でのみ移動できます。
 
-## コマンド実行・ジョブ管理（`ops` / `full`）
+## コマンド実行（`ops` / `full`）
 
-`wait_sec` 以内に終了しないコマンドはバックグラウンドジョブとして継続し、`job_id` を返します（待機中は 5 秒ごとに Progress 通知）。同時実行は最大 16 件、終了保持は 32 件、出力リングは 1 MiB、1 回の返却上限は 64 KiB です。
+`wait_sec` 秒以内に終わらないコマンドはバックグラウンドで続行し、`job_id` を返します。同時に実行できるのは 16 件までで、1 回に返す出力は 64 KiB までです。
 
 ### `run_command` / `run_shell`
 
 | パラメータ | 型 | 必須 | 説明 |
 | :--- | :--- | :---: | :--- |
-| `command` / `args` | `string` / `[]string` | ○ / — | `run_command` 用（シェル展開なし） |
-| `script` | `string` | ○ | `run_shell` 用（`full` のみ。Windows は PowerShell `-EncodedCommand` UTF-8） |
+| `command` / `args` | `string` / `[]string` | ○ / — | `run_command` のみ。シェルを介さず実行 |
+| `script` | `string` | ○ | `run_shell` のみ |
 | `cwd` | `string` | — | 作業ディレクトリ（既定 `default_dir`） |
 | `stdin` | `string` | — | 標準入力 |
-| `wait_sec` | `int` | — | 待機秒数 `0`〜`120`（既定 `30`、`0` で即バックグラウンド） |
-| `timeout_sec` | `int` | — | 強制終了秒数（既定 `600`、`0` で無制限） |
+| `wait_sec` | `int` | — | 待つ秒数 `0`〜`120`（既定 `30`、`0` ですぐバックグラウンドへ） |
+| `timeout_sec` | `int` | — | 強制終了までの秒数（既定 `600`、`0` で無制限） |
 
-### `get_job_output` / `kill_job` / `list_jobs`
+### ジョブの操作
 
-* `get_job_output`: `job_id`（必須）、`offset`（前回の `next_offset` で増分取得）、`wait_sec`（`0`〜`120`、既定 `30`）。
-* `kill_job`: `job_id`（必須）。子プロセスツリーごと終了します。
-* `list_jobs`: 実行中・最近終了したジョブ一覧を返します。
+* `get_job_output`: `job_id`、`offset`（前回の `next_offset` を渡すと続きだけ取得）、`wait_sec`（既定 `30`）
+* `kill_job`: `job_id`。子プロセスもまとめて終了します。
+* `list_jobs`: 実行中と最近終了したジョブの一覧
 
-## MCP 中継プロキシ
+## MCP サーバーの中継
 
-* `list_mcp_servers`: 登録・起動中の下流サーバー一覧と状態を返します。
-* `list_mcp_tools`: `server`（必須）のツール一覧と `input_schema` を返します（未起動なら自動起動）。
-* `call_mcp_tool`: `server`, `tool`（必須）, `arguments`（任意）。タイムアウト 120 秒、テキスト返却上限 64 KiB。
-* `start_mcp_server` / `stop_mcp_server`（`full` のみ）: `server`, `command`, `args`, `cwd` で動的起動、または `server` 指定で停止します。
+* `list_mcp_servers`: 中継先サーバーの一覧と状態
+* `list_mcp_tools`: `server` のツール一覧（未起動なら起動）
+* `call_mcp_tool`: `server`、`tool`、`arguments`。120 秒でタイムアウトします。
+* `start_mcp_server` / `stop_mcp_server`（`full` のみ）: `server`、`command`、`args`、`cwd` で起動し、`server` を指定して停止します。

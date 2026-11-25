@@ -95,14 +95,15 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 		if in.Path == "" {
 			return nil, errors.New("path or paths is required")
 		}
-		return d.readOne(ctx, in.Path, in.StartLine, in.EndLine, maxReadOutput)
+		return d.readOne(ctx, in.Path, in.StartLine, in.EndLine, maxReadOutput, d.Cfg.MaxFileBytes)
 	case in.Path != "":
 		return nil, errors.New("give either path or paths, not both")
 	case len(in.Paths) > maxReadPaths:
 		return nil, fmt.Errorf("at most %d paths can be read at once", maxReadPaths)
 	}
 	// The files share one output budget, so many large files cannot flood the
-	// context; each still gets at least a small share.
+	// context: each gets a fair share of what is left (never more than a
+	// single read returns), and images must fit in what is left.
 	var out []mcp.Content
 	budget := maxMultiReadBytes
 	for i, p := range in.Paths {
@@ -111,13 +112,15 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 				len(in.Paths)-i, p)})
 			break
 		}
-		share := max(budget/(len(in.Paths)-i), 4<<10)
-		content, err := d.readOne(ctx, p, in.StartLine, in.EndLine, share)
+		share := min(max(budget/(len(in.Paths)-i), 4<<10), maxReadOutput, budget)
+		content, err := d.readOne(ctx, p, in.StartLine, in.EndLine, share, min(d.Cfg.MaxFileBytes, int64(budget)))
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
 			}
-			out = append(out, &mcp.TextContent{Text: fmt.Sprintf("error: %s: %v", p, err)})
+			msg := &mcp.TextContent{Text: fmt.Sprintf("error: %s: %v", p, err)}
+			budget -= len(msg.Text)
+			out = append(out, msg)
 			continue
 		}
 		for _, c := range content {
@@ -133,8 +136,9 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 	return out, nil
 }
 
-// readOne reads one file, returning at most maxOut bytes of text.
-func (d *Deps) readOne(ctx context.Context, p string, startLine, endLine, maxOut int) ([]mcp.Content, error) {
+// readOne reads one file, returning at most maxOut bytes of text or an image
+// of at most maxImage bytes.
+func (d *Deps) readOne(ctx context.Context, p string, startLine, endLine, maxOut int, maxImage int64) ([]mcp.Content, error) {
 	r, err := d.Guard.Resolve(p)
 	if err != nil {
 		return nil, err
@@ -161,7 +165,10 @@ func (d *Deps) readOne(ctx context.Context, p string, startLine, endLine, maxOut
 		if info.Size() > d.Cfg.MaxFileBytes {
 			return nil, fmt.Errorf("%s is a %d byte image; the limit is %d (--max-file-bytes)", r.Abs, info.Size(), d.Cfg.MaxFileBytes)
 		}
-		data, err := readLimit(br, r.Abs, d.Cfg.MaxFileBytes)
+		if info.Size() > maxImage {
+			return nil, fmt.Errorf("%s is a %d byte image, more than is left for this call (%d bytes); read it on its own", r.Abs, info.Size(), maxImage)
+		}
+		data, err := readLimit(br, r.Abs, maxImage)
 		if err != nil {
 			return nil, err
 		}

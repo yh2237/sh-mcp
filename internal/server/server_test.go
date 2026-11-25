@@ -717,6 +717,16 @@ func TestReadManyFiles(t *testing.T) {
 	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") || !strings.Contains(out, "error: missing.txt") {
 		t.Errorf("multi read: %s", out)
 	}
+	// An image larger than what is left of the shared budget is refused
+	// (it would be read whole); the other files still come back.
+	big := append([]byte("\x89PNG\r\n\x1a\n"), bytes.Repeat([]byte{0}, 600<<10)...)
+	if err := os.WriteFile(filepath.Join(h.dir, "big.png"), big, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out = h.ok("read_file", map[string]any{"paths": []string{"big.png", "a.txt"}})
+	if !strings.Contains(out, "read it on its own") || !strings.Contains(out, "alpha") {
+		t.Errorf("multi read with a large image: %.300s", out)
+	}
 	h.fail("read_file", map[string]any{"path": "a.txt", "paths": []string{"b.txt"}}, "not both")
 	h.fail("read_file", map[string]any{}, "path or paths is required")
 }

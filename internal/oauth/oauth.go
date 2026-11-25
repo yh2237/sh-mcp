@@ -71,11 +71,13 @@ type Server struct {
 // the signing key. access describes what an approved client may do, for the
 // consent page.
 func New(publicURL *url.URL, mcpPath, ownerSecret, access string) (*Server, error) {
-	key, err := hkdf.Key(sha256.New, []byte(ownerSecret), []byte("sh-mcp oauth"), "token signing v1", 32)
+	issuer := strings.TrimRight(publicURL.String(), "/")
+	// The issuer is part of the key so that two servers sharing an auth token
+	// (say a read-only and a full one) do not accept each other's tokens.
+	key, err := hkdf.Key(sha256.New, []byte(ownerSecret), []byte("sh-mcp oauth"), "token signing v2\x00"+issuer, 32)
 	if err != nil {
 		return nil, err
 	}
-	issuer := strings.TrimRight(publicURL.String(), "/")
 	return &Server{
 		issuer:    issuer,
 		resource:  issuer + mcpPath,

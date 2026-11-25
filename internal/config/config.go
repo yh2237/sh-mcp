@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"runtime"
 	"strconv"
 	"strings"
 )
@@ -36,22 +35,18 @@ const (
 )
 
 type Config struct {
-	Transport      string
-	Listen         string
-	PublicURL      *url.URL
-	AuthToken      string
-	InsecureNoAuth bool
+	Transport string
+	Listen    string
+	PublicURL *url.URL
+	AuthToken string
 
 	Mode                string
 	AllowedDirs         []string
 	AutoApproveCommands []string
 	DenyGlobs           []string
 	MaxFileBytes        int64
-	// Shell is the argv prefix used by run_shell; the script is appended as
-	// the last argument.
-	Shell          []string
-	EnvPassthrough []string
-	MCPServers     []MCPServer
+	EnvPassthrough      []string
+	MCPServers          []MCPServer
 
 	AuditLog    string
 	ShowVersion bool
@@ -94,7 +89,7 @@ func Default() *Config {
 
 func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Config, error) {
 	c := Default()
-	var publicURL, tokenFile string
+	var publicURL string
 	var mcpServers []string
 	fs := flag.NewFlagSet("sh-mcp", flag.ContinueOnError)
 	fs.SetOutput(usageOut)
@@ -103,7 +98,7 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 			"Runs over stdio unless --listen or --public-url is given, then over HTTP.\n"+
 			"Every flag --x-y can also be set as SH_MCP_X_Y (flags win). Repeatable flags take\n"+
 			"several values in one variable separated by %q.\n"+
-			"The HTTP auth token is read from $%s or the file named by --auth-token-file.\n\n", ListSeparator, TokenEnv)
+			"The HTTP auth token is read from $%s.\n\n", ListSeparator, TokenEnv)
 		fs.PrintDefaults()
 	}
 	b := &binder{fs: fs, getenv: getenv}
@@ -113,14 +108,11 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 	b.list(&c.AutoApproveCommands, "auto-approve-command", false, "program run_command may start without approval in --mode ask (repeatable)")
 	b.list(&c.DenyGlobs, "deny-glob", true, "additional glob of files the file tools must not touch, or with a leading ! files to exempt (repeatable; added to the defaults)")
 	b.int64(&c.MaxFileBytes, "max-file-bytes", "largest file the file tools read, write or search (text and images)")
-	b.fields(&c.Shell, "shell", `shell command line run_shell appends the script to, e.g. "/bin/bash -c" (default: /bin/sh -c, or PowerShell on Windows)`)
 	b.list(&c.EnvPassthrough, "env-passthrough", false, "extra environment variable passed to commands and MCP servers; NAME* passes every variable starting with NAME (repeatable)")
 	b.list(&mcpServers, "mcp-server", false, `stdio MCP server the agent may use through sh-mcp, as name=command line, e.g. "github=npx -y @modelcontextprotocol/server-github" (repeatable)`)
 
 	b.str(&c.Listen, "listen", "serve HTTP on this address, e.g. "+DefaultListen)
 	b.str(&publicURL, "public-url", "public https URL of this server, e.g. https://mcp.example.com; serves HTTP (on "+DefaultListen+" unless --listen is given), enables OAuth and accepts that host behind a tunnel or reverse proxy")
-	b.str(&tokenFile, "auth-token-file", "file containing the auth token, instead of $"+TokenEnv)
-	b.boolean(&c.InsecureNoAuth, "insecure-no-auth", "allow the HTTP transport without an auth token")
 
 	b.str(&c.AuditLog, "audit-log", "JSONL audit log file (default: stderr)")
 	fs.BoolVar(&c.ShowVersion, "version", false, "print version and exit")
@@ -142,16 +134,6 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 
 	var errs []error
 	c.AuthToken = getenv(TokenEnv)
-	if tokenFile != "" {
-		if c.AuthToken != "" {
-			errs = append(errs, fmt.Errorf("set either $%s or --auth-token-file, not both", TokenEnv))
-		}
-		data, err := os.ReadFile(tokenFile)
-		if err != nil {
-			errs = append(errs, fmt.Errorf("--auth-token-file: %w", err))
-		}
-		c.AuthToken = strings.TrimSpace(string(data))
-	}
 	seen := map[string]bool{}
 	for _, raw := range mcpServers {
 		srv, err := parseMCPServer(raw)
@@ -293,16 +275,14 @@ func (c *Config) Finalize() error {
 	}
 
 	if c.Transport == TransportHTTP {
-		if c.AuthToken == "" && !c.InsecureNoAuth {
-			errs = append(errs, fmt.Errorf("serving HTTP requires an auth token in $%s or --auth-token-file (create one with --gen-token), or --insecure-no-auth", TokenEnv))
+		if c.AuthToken == "" {
+			errs = append(errs, fmt.Errorf("serving HTTP requires an auth token in $%s (create one with --gen-token)", TokenEnv))
 		}
 		if c.AuthToken != "" && len(c.AuthToken) < 16 {
 			errs = append(errs, errors.New("auth token must be at least 16 characters"))
 		}
 	}
-	if len(c.Shell) == 0 {
-		c.Shell = defaultShell()
-	}
+
 	if c.MaxFileBytes <= 0 {
 		errs = append(errs, errors.New("--max-file-bytes must be positive"))
 	}
@@ -335,18 +315,6 @@ func (b *binder) str(p *string, name, usage string) {
 	b.fs.StringVar(p, name, *p, fmt.Sprintf("%s [%s]", usage, key))
 }
 
-func (b *binder) boolean(p *bool, name, usage string) {
-	key, v, ok := b.env(name)
-	if ok {
-		parsed, err := strconv.ParseBool(v)
-		if err != nil {
-			b.errs = append(b.errs, fmt.Errorf("%s=%q: want true or false", key, v))
-		}
-		*p = parsed
-	}
-	b.fs.BoolVar(p, name, *p, fmt.Sprintf("%s [%s]", usage, key))
-}
-
 func (b *binder) int64(p *int64, name, usage string) {
 	key, v, ok := b.env(name)
 	if ok {
@@ -372,17 +340,6 @@ func (b *binder) list(p *[]string, name string, additive bool, usage string) {
 		}
 	}
 	b.fs.Var(&listValue{p: p, additive: additive}, name, fmt.Sprintf("%s [%s]", usage, key))
-}
-
-func (b *binder) fields(p *[]string, name, usage string) {
-	key, v, ok := b.env(name)
-	if ok {
-		*p = strings.Fields(v)
-	}
-	b.fs.Func(name, fmt.Sprintf("%s [%s]", usage, key), func(s string) error {
-		*p = strings.Fields(s)
-		return nil
-	})
 }
 
 type listValue struct {
@@ -415,13 +372,6 @@ func splitList(s string) []string {
 		}
 	}
 	return out
-}
-
-func defaultShell() []string {
-	if runtime.GOOS == "windows" {
-		return []string{"powershell.exe", "-NoLogo", "-NoProfile", "-NonInteractive", "-Command"}
-	}
-	return []string{"/bin/sh", "-c"}
 }
 
 func expandHome(p string) string {

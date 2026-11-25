@@ -16,12 +16,9 @@ import (
 
 // startInTerminal starts cmd in a new pseudo-console (ConPTY). os/exec cannot
 // attach one, so the process is created by proc directly; only cmd's path,
-// arguments (or raw command line), directory and environment are used.
+// arguments, directory and environment are used.
 func startInTerminal(cmd *exec.Cmd) (*proc.Tree, func() (*os.ProcessState, error), *terminal, error) {
 	line := windows.ComposeCommandLine(cmd.Args)
-	if cmd.SysProcAttr != nil && cmd.SysProcAttr.CmdLine != "" {
-		line = cmd.SysProcAttr.CmdLine
-	}
 	tree, pc, err := proc.StartPseudoConsole(cmd.Path, line, cmd.Dir, cmd.Env, ttyCols, ttyRows)
 	if err != nil {
 		return nil, nil, nil, err

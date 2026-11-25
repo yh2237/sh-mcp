@@ -45,7 +45,7 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 		log.Warn("--auto-approve-command programs not found on PATH; they will need approval", "commands", missing)
 	}
 	var oa *oauth.Server
-	if cfg.Transport == config.TransportHTTP && cfg.PublicURL != nil && cfg.AuthToken != "" {
+	if cfg.Transport == config.TransportHTTP && cfg.PublicURL != nil {
 		var err error
 		if oa, err = oauth.New(cfg.PublicURL, config.MCPPath, cfg.AuthToken, accessDescription(cfg)); err != nil {
 			return nil, err
@@ -168,15 +168,14 @@ func (s *Server) Handler() http.Handler {
 		// security.CheckHost replaces this check when --public-url is set.
 		DisableLocalhostProtection: public != nil,
 	})
-	if s.cfg.AuthToken != "" {
-		var verifyOAuth func(string) (*auth.TokenInfo, error)
-		metadataURL := ""
-		if s.oauth != nil {
-			verifyOAuth = s.oauth.VerifyAccessToken
-			metadataURL = s.oauth.ResourceMetadataURL()
-		}
-		mcpHandler = security.RequireBearer(security.BearerVerifier(s.cfg.AuthToken, verifyOAuth), metadataURL, mcpHandler)
+	// HTTP always has an auth token (config refuses to start without one).
+	var verifyOAuth func(string) (*auth.TokenInfo, error)
+	metadataURL := ""
+	if s.oauth != nil {
+		verifyOAuth = s.oauth.VerifyAccessToken
+		metadataURL = s.oauth.ResourceMetadataURL()
 	}
+	mcpHandler = security.RequireBearer(security.BearerVerifier(s.cfg.AuthToken, verifyOAuth), metadataURL, mcpHandler)
 	csrf := http.NewCrossOriginProtection()
 	mcpHandler = csrf.Handler(mcpHandler)
 
@@ -206,10 +205,7 @@ func (s *Server) runHTTP(ctx context.Context) error {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       2 * time.Minute,
 	}
-	if s.cfg.AuthToken == "" {
-		s.log.Warn("HTTP transport is running WITHOUT authentication (--insecure-no-auth)")
-	}
-	if s.cfg.PublicURL != nil && s.cfg.AuthToken != "" {
+	if s.oauth != nil {
 		s.log.Info("OAuth enabled", "mcp_url", s.oauth.Resource())
 	}
 	s.log.Info("listening", "addr", ln.Addr().String(), "path", config.MCPPath)

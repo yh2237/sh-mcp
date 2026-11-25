@@ -84,13 +84,12 @@ type Info struct {
 }
 
 type StartOptions struct {
-	Argv      []string // Argv[0] must be an absolute path
-	Dir       string
-	Env       []string
-	Stdin     string
-	Display   string
-	Timeout   time.Duration // 0 means no limit
-	Configure func(*exec.Cmd)
+	Argv    []string // Argv[0] must be an absolute path
+	Dir     string
+	Env     []string
+	Stdin   string
+	Display string
+	Timeout time.Duration // 0 means no limit
 	// TTY runs the command in a pseudo-terminal whose input stays open for
 	// WriteInput (interactive programs).
 	TTY bool
@@ -149,9 +148,6 @@ func (m *Manager) Start(o StartOptions) (*Job, error) {
 	cmd.Stderr = j.out
 	if o.Stdin != "" && !o.TTY {
 		cmd.Stdin = strings.NewReader(o.Stdin)
-	}
-	if o.Configure != nil {
-		o.Configure(cmd)
 	}
 	if o.TTY {
 		tree, wait, term, err := startInTerminal(cmd)

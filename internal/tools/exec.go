@@ -5,11 +5,9 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
-	"os/exec"
-	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
-	"syscall"
 	"time"
 	"unicode/utf16"
 
@@ -112,7 +110,7 @@ func registerExec(s *mcp.Server, d *Deps) {
 		})
 
 	shellDesc := fmt.Sprintf("Run a script with %s and return its exit code and output. "+
-		"Each call starts a fresh shell: cd and variables do not persist, so pass cwd instead. ", strings.Join(d.Cfg.Shell, " ")) + backgroundHelp
+		"Each call starts a fresh shell: cd and variables do not persist, so pass cwd instead. ", shellName) + backgroundHelp
 	if d.needsApproval() {
 		shellDesc += " Each script waits for the user's approval."
 	}
@@ -131,18 +129,18 @@ func registerExec(s *mcp.Server, d *Deps) {
 		if err != nil {
 			return "", err
 		}
-		argv, configure, err := d.shellArgv(in.Script)
+		argv, err := d.shellArgv(in.Script)
 		if err != nil {
 			return "", err
 		}
-		msg := fmt.Sprintf("Run this script with %s?\ncwd: %s\n---\n%s", d.Cfg.Shell[0], dir, in.Script)
+		msg := fmt.Sprintf("Run this script with %s?\ncwd: %s\n---\n%s", shellName, dir, in.Script)
 		if in.Stdin != "" {
 			msg += "\n--- stdin ---\n" + in.Stdin
 		}
 		if err := d.approve(req, msg); err != nil {
 			return "", err
 		}
-		return d.launch(ctx, req, jobs.StartOptions{Argv: argv, Dir: dir, Stdin: in.Stdin, Display: truncate(in.Script, 200), Configure: configure, TTY: in.TTY}, in.WaitSec, in.TimeoutSec)
+		return d.launch(ctx, req, jobs.StartOptions{Argv: argv, Dir: dir, Stdin: in.Stdin, Display: truncate(in.Script, 200), TTY: in.TTY}, in.WaitSec, in.TimeoutSec)
 	})
 
 	addTool(s, d, &mcp.Tool{
@@ -414,46 +412,30 @@ func (d *Deps) workDir(cwd string) (string, error) {
 	return r.Abs, nil
 }
 
-// shellArgv builds the command line for a shell script. PowerShell receives
-// the script base64-encoded (-EncodedCommand) and cmd.exe a raw command line,
-// because neither parses arguments with the rules Go uses to quote them.
-func (d *Deps) shellArgv(script string) ([]string, func(*exec.Cmd), error) {
-	sh := d.Cfg.Shell
-	exe, err := d.Cmd.ResolveShell(sh[0])
-	if err != nil {
-		return nil, nil, fmt.Errorf("shell %q: %w", sh[0], err)
-	}
-	base := strings.ToLower(strings.TrimSuffix(filepath.Base(exe), filepath.Ext(exe)))
-	args := append([]string(nil), sh[1:]...)
-	switch {
-	case (base == "powershell" || base == "pwsh") && len(args) > 0 && strings.EqualFold(args[len(args)-1], "-Command"):
-		// Make PowerShell write UTF-8 to the pipe instead of the OEM code page,
-		// and not serialize progress bars into the output as CLIXML.
-		script = "$ProgressPreference = 'SilentlyContinue'; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding\n" + script
-		args[len(args)-1] = "-EncodedCommand"
-		return append([]string{exe}, append(args, encodePowerShell(script))...), nil, nil
-	case base == "cmd":
-		cmdline := fmt.Sprintf(`"%s" %s /S /C "%s"`, exe, strings.Join(withoutSlashC(args), " "), script)
-		return []string{exe}, func(c *exec.Cmd) {
-			if c.SysProcAttr == nil {
-				c.SysProcAttr = &syscall.SysProcAttr{}
-			}
-			setCmdLine(c.SysProcAttr, cmdline)
-		}, nil
-	}
-	return append([]string{exe}, append(args, script)...), nil, nil
-}
+// shellName is what run_shell runs scripts with: sh on Unix, PowerShell on
+// Windows.
+var shellName = map[bool]string{false: "/bin/sh -c", true: "PowerShell"}[runtime.GOOS == "windows"]
 
-func withoutSlashC(args []string) []string {
-	var out []string
-	for _, a := range args {
-		if !strings.EqualFold(a, "/C") && !strings.EqualFold(a, "/S") {
-			out = append(out, a)
+// shellArgv builds the command line for a script. PowerShell receives it
+// base64-encoded (-EncodedCommand) because it does not parse arguments by the
+// rules Go uses to quote them.
+func (d *Deps) shellArgv(script string) ([]string, error) {
+	if runtime.GOOS != "windows" {
+		exe, err := d.Cmd.ResolveShell("/bin/sh")
+		if err != nil {
+			return nil, fmt.Errorf("shell /bin/sh: %w", err)
 		}
+		return []string{exe, "-c", script}, nil
 	}
-	return out
+	exe, err := d.Cmd.ResolveShell("powershell.exe")
+	if err != nil {
+		return nil, fmt.Errorf("shell powershell.exe: %w", err)
+	}
+	// Make PowerShell write UTF-8 to the pipe instead of the OEM code page,
+	// and not serialize progress bars into the output as CLIXML.
+	script = "$ProgressPreference = 'SilentlyContinue'; [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new($false); $OutputEncoding = [Console]::OutputEncoding\n" + script
+	return []string{exe, "-NoLogo", "-NoProfile", "-NonInteractive", "-EncodedCommand", encodePowerShell(script)}, nil
 }
-
 func encodePowerShell(script string) string {
 	u := utf16.Encode([]rune(script))
 	b := make([]byte, len(u)*2)

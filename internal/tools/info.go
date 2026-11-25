@@ -53,9 +53,7 @@ func registerInfo(s *mcp.Server, d *Deps) {
 			fmt.Fprintf(&b, "%s\n", note)
 		}
 		if d.Cfg.CanExec() {
-			fmt.Fprintf(&b, "run_shell uses: %s\n", strings.Join(d.Cfg.Shell, " "))
-		}
-		if d.Cfg.CanExec() {
+			fmt.Fprintf(&b, "run_shell uses: %s\n", shellName)
 			fmt.Fprintf(&b, "commands: wait %ds by default, then continue as a background job; killed after %ds unless timeout_sec says otherwise\n",
 				defaultWaitSec, defaultTimeoutSec)
 		}

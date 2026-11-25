@@ -2,7 +2,6 @@ package config
 
 import (
 	"io"
-	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -51,7 +50,6 @@ func TestFlagsOverrideEnv(t *testing.T) {
 		"SH_MCP_LISTEN":     "127.0.0.1:1111",
 		"SH_MCP_ALLOW_DIR":  "/from/env/a;/from/env/b",
 		"SH_MCP_MODE":       "read",
-		"SH_MCP_SHELL":      "/bin/bash -c",
 		"SH_MCP_AUTH_TOKEN": token,
 	}
 	c, err := parse(t, []string{"--listen", "127.0.0.1:2222", "--allow-dir", dir, "--mode", "full"}, env)
@@ -64,9 +62,7 @@ func TestFlagsOverrideEnv(t *testing.T) {
 	if want := []string{dir}; !reflect.DeepEqual(c.AllowedDirs, want) {
 		t.Errorf("allow-dir flag should replace env: %v", c.AllowedDirs)
 	}
-	if !reflect.DeepEqual(c.Shell, []string{"/bin/bash", "-c"}) {
-		t.Errorf("shell: %v", c.Shell)
-	}
+
 }
 
 func TestListsFromEnv(t *testing.T) {
@@ -118,22 +114,6 @@ func TestMCPServers(t *testing.T) {
 	}
 }
 
-func TestTokenFile(t *testing.T) {
-	f := filepath.Join(t.TempDir(), "token")
-	os.WriteFile(f, []byte("  0123456789abcdef0123\n"), 0o600)
-	c, err := parse(t, []string{"--listen", DefaultListen, "--allow-dir", ".", "--auth-token-file", f}, nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if c.AuthToken != "0123456789abcdef0123" {
-		t.Errorf("token = %q", c.AuthToken)
-	}
-	_, err = parse(t, []string{"--auth-token-file", f}, map[string]string{"SH_MCP_AUTH_TOKEN": "x"})
-	if err == nil || !strings.Contains(err.Error(), "not both") {
-		t.Errorf("both token sources: %v", err)
-	}
-}
-
 func TestGenTokenSkipsValidation(t *testing.T) {
 	c, err := parse(t, []string{"--gen-token", "--mode", "nonsense"}, nil)
 	if err != nil || !c.GenToken {
@@ -149,7 +129,8 @@ func TestInvalid(t *testing.T) {
 	}{
 		{[]string{"--listen", DefaultListen}, nil, "--allow-dir"},
 		{[]string{"--listen", DefaultListen, "--allow-dir", "."}, nil, "--gen-token"},
-		{nil, map[string]string{"SH_MCP_INSECURE_NO_AUTH": "yes please"}, "SH_MCP_INSECURE_NO_AUTH"},
+		{[]string{"--insecure-no-auth"}, nil, "not defined"},
+		{[]string{"--shell", "/bin/bash -c"}, nil, "not defined"},
 		{[]string{"--mode", "admin"}, nil, "--mode"},
 		{[]string{"--mode", "ops"}, nil, "--mode must be"},
 		{[]string{"--mode", "full", "--auto-approve-command", "git"}, nil, "only applies to --mode ask"},

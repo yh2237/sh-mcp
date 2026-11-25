@@ -26,7 +26,7 @@
 | `--auth-token-file` | `SH_MCP_AUTH_TOKEN_FILE` | なし | 認証トークンを読むファイル |
 | `--insecure-no-auth` | `SH_MCP_INSECURE_NO_AUTH` | `false` | 認証なしの HTTP を許可（検証用） |
 | `--audit-log` | `SH_MCP_AUDIT_LOG` | stderr | 監査ログ（JSONL）の出力先 |
-| `--version` / `--gen-token` | — | — | バージョン表示 / 認証トークン生成 |
+| `--version` / `--gen-token` / `--update` | — | — | バージョン表示 / 認証トークン生成 / 最新リリースへの更新（`SHA256SUMS` で確認、実行ファイルを置き換えて終了） |
 
 ## 認証トークン
 

@@ -8,7 +8,7 @@ Linux サーバーで sh-mcp を常駐させ、[Cloudflare Tunnel](https://devel
 curl -fsSL https://raw.githubusercontent.com/yh2237/sh-mcp/main/install.sh | sh
 ```
 
-`~/.local/bin/sh-mcp` に入ります。
+`~/.local/bin/sh-mcp` に入ります。更新は `sh-mcp --update` の後、サービスを再起動します（例: `sudo systemctl restart sh-mcp`）。
 
 ## 2. 常駐させる
 

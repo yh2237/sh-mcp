@@ -48,7 +48,7 @@ sh-mcp \
 
 ## 子プロセスの環境変数
 
-コマンドと MCP サーバーには以下の基本リストと `--env-passthrough` の変数だけを渡します（`SH_MCP_AUTH_TOKEN` は常に除外）。対話待ちで止まらないよう `GIT_TERMINAL_PROMPT=0`, `GIT_PAGER=cat`, `PAGER=cat` を付けます。
+コマンドと MCP サーバーには以下の基本リストと `--env-passthrough` の変数だけを渡します（`SH_MCP_AUTH_TOKEN` は常に除外）。対話待ちで止まらないよう `GIT_TERMINAL_PROMPT=0`, `GIT_PAGER=cat`, `PAGER=cat` を付けます。Windows では Python の入出力を UTF-8 にするため、`PYTHONUTF8` が未設定なら `PYTHONUTF8=1` を付けます。
 
 * Unix: `PATH`, `HOME`, `USER`, `LOGNAME`, `SHELL`, `LANG`, `LANGUAGE`, `TERM`, `TZ`, `TMPDIR`, `LC_*`, `XDG_*`
 * Windows: `PATH`, `PATHEXT`, `SystemRoot`, `SystemDrive`, `windir`, `COMSPEC`, `TEMP`, `TMP`, `USERPROFILE`, `USERNAME`, `HOMEDRIVE`, `HOMEPATH`, `APPDATA`, `LOCALAPPDATA`, `ProgramData`, `ProgramFiles`, `ProgramFiles(x86)`, `CommonProgramFiles`, `PROCESSOR_ARCHITECTURE`, `NUMBER_OF_PROCESSORS`, `OS`, `PSModulePath`

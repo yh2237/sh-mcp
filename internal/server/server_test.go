@@ -662,3 +662,18 @@ func TestReadLargeFileStopsAfterRange(t *testing.T) {
 		t.Errorf("reading to the end counts the lines: %s", out)
 	}
 }
+
+func TestReadManyFiles(t *testing.T) {
+	h := newHarness(t, config.ModeRead, nil)
+	for name, content := range map[string]string{"a.txt": "alpha\n", "b.txt": "beta\n"} {
+		if err := os.WriteFile(filepath.Join(h.dir, name), []byte(content), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	out := h.ok("read_file", map[string]any{"paths": []string{"a.txt", "missing.txt", "b.txt"}})
+	if !strings.Contains(out, "alpha") || !strings.Contains(out, "beta") || !strings.Contains(out, "error: missing.txt") {
+		t.Errorf("multi read: %s", out)
+	}
+	h.fail("read_file", map[string]any{"path": "a.txt", "paths": []string{"b.txt"}}, "not both")
+	h.fail("read_file", map[string]any{}, "path or paths is required")
+}

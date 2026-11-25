@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -23,10 +24,16 @@ const (
 	maxReadOutput    = 256 << 10
 )
 
+const (
+	maxReadPaths      = 20
+	maxMultiReadBytes = 512 << 10
+)
+
 type readFileInput struct {
-	Path      string `json:"path" jsonschema:"file path, absolute or relative to default_dir"`
-	StartLine int    `json:"start_line,omitempty" jsonschema:"first line to return, 1-based (default 1)"`
-	EndLine   int    `json:"end_line,omitempty" jsonschema:"last line to return, inclusive (default start_line+1999)"`
+	Path      string   `json:"path,omitempty" jsonschema:"file path, absolute or relative to default_dir"`
+	Paths     []string `json:"paths,omitempty" jsonschema:"several files to read in one call instead of path (up to 20); start_line and end_line apply to each"`
+	StartLine int      `json:"start_line,omitempty" jsonschema:"first line to return, 1-based (default 1)"`
+	EndLine   int      `json:"end_line,omitempty" jsonschema:"last line to return, inclusive (default start_line+1999)"`
 }
 
 type listDirInput struct {
@@ -39,11 +46,12 @@ func registerRead(s *mcp.Server, d *Deps) {
 	addContentTool(s, d, &mcp.Tool{
 		Name:  "read_file",
 		Title: "Read file",
-		Description: "Read a text file with line numbers (cat -n style). Returns at most 2000 lines per call and truncates lines longer than 2000 characters; " +
-			"use start_line/end_line to page through larger files. PNG, JPEG, GIF and WebP images are returned as images.",
+		Description: "Read a text file with line numbers (cat -n style). Returns at most 2000 lines per file and truncates lines longer than 2000 characters; " +
+			"use start_line/end_line to page through larger files. PNG, JPEG, GIF and WebP images are returned as images. " +
+			"Pass paths instead of path to read several files at once; a file that cannot be read is reported without failing the others.",
 		Annotations: readOnlyAnn,
 	}, func(in readFileInput) map[string]any {
-		return map[string]any{"path": in.Path, "start_line": in.StartLine, "end_line": in.EndLine}
+		return map[string]any{"path": in.Path, "paths": in.Paths, "start_line": in.StartLine, "end_line": in.EndLine}
 	}, d.readFile)
 
 	addTool(s, d, &mcp.Tool{
@@ -82,7 +90,52 @@ func readLimit(r io.Reader, abs string, limit int64) ([]byte, error) {
 }
 
 func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFileInput) ([]mcp.Content, error) {
-	r, err := d.Guard.Resolve(in.Path)
+	switch {
+	case len(in.Paths) == 0:
+		if in.Path == "" {
+			return nil, errors.New("path or paths is required")
+		}
+		return d.readOne(ctx, in.Path, in.StartLine, in.EndLine, maxReadOutput)
+	case in.Path != "":
+		return nil, errors.New("give either path or paths, not both")
+	case len(in.Paths) > maxReadPaths:
+		return nil, fmt.Errorf("at most %d paths can be read at once", maxReadPaths)
+	}
+	// The files share one output budget, so many large files cannot flood the
+	// context; each still gets at least a small share.
+	var out []mcp.Content
+	budget := maxMultiReadBytes
+	for i, p := range in.Paths {
+		if budget <= 0 {
+			out = append(out, &mcp.TextContent{Text: fmt.Sprintf("skipped %d file(s) (%s, ...): output limit reached; read them in another call",
+				len(in.Paths)-i, p)})
+			break
+		}
+		share := max(budget/(len(in.Paths)-i), 4<<10)
+		content, err := d.readOne(ctx, p, in.StartLine, in.EndLine, share)
+		if err != nil {
+			if ctx.Err() != nil {
+				return nil, ctx.Err()
+			}
+			out = append(out, &mcp.TextContent{Text: fmt.Sprintf("error: %s: %v", p, err)})
+			continue
+		}
+		for _, c := range content {
+			switch c := c.(type) {
+			case *mcp.TextContent:
+				budget -= len(c.Text)
+			case *mcp.ImageContent:
+				budget -= len(c.Data)
+			}
+		}
+		out = append(out, content...)
+	}
+	return out, nil
+}
+
+// readOne reads one file, returning at most maxOut bytes of text.
+func (d *Deps) readOne(ctx context.Context, p string, startLine, endLine, maxOut int) ([]mcp.Content, error) {
+	r, err := d.Guard.Resolve(p)
 	if err != nil {
 		return nil, err
 	}
@@ -121,8 +174,8 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 		return nil, fmt.Errorf("%s looks like a binary file (%d bytes)", r.Abs, info.Size())
 	}
 
-	start := max(in.StartLine, 1)
-	end := in.EndLine
+	start := max(startLine, 1)
+	end := endLine
 	if end <= 0 {
 		end = start + defaultReadLines - 1
 	}
@@ -137,7 +190,6 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 	// larger ones (logs) reading stops after the requested range.
 	countAll := info.Size() <= d.Cfg.MaxFileBytes
 	var out strings.Builder
-	maxOut := maxReadOutput
 	lineNo, lastShown := 0, 0
 	outputFull, eof := false, false
 	for {

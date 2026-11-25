@@ -18,6 +18,7 @@
 | `run_command` | — | △（`--auto-approve-command` は ○） | ○ | シェルを介さずコマンド実行 |
 | `run_shell` | — | △ | ○ | シェルスクリプト実行 |
 | `get_job_output` / `kill_job` / `list_jobs` | — | ○ | ○ | バックグラウンドジョブの操作 |
+| `write_stdin` | — | △ | ○ | `tty` で起動したジョブへのキー入力（対話シェルなど） |
 | `list_mcp_servers` / `list_mcp_tools` | ※ | ○ | ○ | 中継先 MCP サーバーの一覧（※ `--mcp-server` 指定時） |
 | `call_mcp_tool` | ※（読み取り専用のツールのみ） | △（読み取り専用のツールは ○） | ○ | 中継先 MCP サーバーのツール呼び出し |
 | `start_mcp_server` / `stop_mcp_server` | — | △ | ○ | 中継先 MCP サーバーの起動・停止 |
@@ -107,10 +108,26 @@ sh-mcp が引数を固定して git を実行するので、読み取り専用�
 | `stdin` | `string` | — | 標準入力 |
 | `wait_sec` | `int` | — | 待つ秒数 `0`〜`120`（既定 `30`、`0` ですぐバックグラウンドへ） |
 | `timeout_sec` | `int` | — | 強制終了までの秒数（既定 `600`、`0` で無制限） |
+| `tty` | `bool` | — | 疑似端末で実行し、`write_stdin` で操作できるようにする（Linux / macOS のみ） |
+
+### 対話的な操作（`tty`）
+
+`tty: true` で起動すると、シェル・REPL・ssh・パスワード入力など、対話的なプログラムを操作できます。起動直後は、出力が止まった（入力待ちになった）時点で結果を返します。開いたままにするセッションは `timeout_sec: 0` で起動してください。
+
+```text
+run_command  {"command": "bash", "tty": true, "timeout_sec": 0}   → job-1
+write_stdin  {"job_id": "job-1", "input": "cd /srv && ls\n"}
+write_stdin  {"job_id": "job-1", "input": "\u0003"}               ← Ctrl-C
+```
+
+* 出力は端末の制御コードを取り除いて返します。行の上書き（進捗表示や REPL の再描画）は画面と同じ結果になりますが、画面全体を描くプログラム（`vim`、`top`）は読めません。
+* 端末の大きさは 120 桁 × 30 行です。
+* Windows ではまだ使えません。
 
 ### ジョブの操作
 
 * `get_job_output`: `job_id`、`offset`（前回の `next_offset` を渡すと続きだけ取得）、`wait_sec`（既定 `30`）
+* `write_stdin`: `job_id`、`input`、`wait_sec`（既定 `5`）。`tty` で起動したジョブに入力し、その後の出力を返します。出力が 0.3 秒止まった時点で返します。`input` を空にすると新しい出力だけを読みます。改行は `\n`、Ctrl-C は `\u0003`、Ctrl-D は `\u0004`、↑ は `\u001b[A` のように JSON のエスケープで書きます。`tty` なしのジョブには Ctrl-C（`\u0003`）だけ送れます（Unix のみ）。
 * `kill_job`: `job_id`。子プロセスもまとめて終了します。
 * `list_jobs`: 実行中と最近終了したジョブの一覧
 

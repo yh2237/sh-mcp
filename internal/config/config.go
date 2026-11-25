@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
-	"strconv"
 	"strings"
 )
 
@@ -44,7 +43,6 @@ type Config struct {
 	AllowedDirs         []string
 	AutoApproveCommands []string
 	DenyGlobs           []string
-	MaxFileBytes        int64
 	EnvPassthrough      []string
 	MCPServers          []MCPServer
 
@@ -80,10 +78,9 @@ var defaultDenyGlobs = []string{
 
 func Default() *Config {
 	return &Config{
-		Transport:    TransportStdio,
-		Mode:         ModeRead,
-		DenyGlobs:    append([]string(nil), defaultDenyGlobs...),
-		MaxFileBytes: 5 << 20,
+		Transport: TransportStdio,
+		Mode:      ModeRead,
+		DenyGlobs: append([]string(nil), defaultDenyGlobs...),
 	}
 }
 
@@ -107,7 +104,6 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 	b.list(&c.AllowedDirs, "allow-dir", false, "directory the tools may access (repeatable; required for http, default for stdio: working directory)")
 	b.list(&c.AutoApproveCommands, "auto-approve-command", false, "program run_command may start without approval in --mode ask (repeatable)")
 	b.list(&c.DenyGlobs, "deny-glob", true, "additional glob of files the file tools must not touch, or with a leading ! files to exempt (repeatable; added to the defaults)")
-	b.int64(&c.MaxFileBytes, "max-file-bytes", "largest file the file tools read, write or search (text and images)")
 	b.list(&c.EnvPassthrough, "env-passthrough", false, "extra environment variable passed to commands and MCP servers; NAME* passes every variable starting with NAME (repeatable)")
 	b.list(&mcpServers, "mcp-server", false, `stdio MCP server the agent may use through sh-mcp, as name=command line, e.g. "github=npx -y @modelcontextprotocol/server-github" (repeatable)`)
 
@@ -119,9 +115,6 @@ func Parse(args []string, getenv func(string) string, usageOut io.Writer) (*Conf
 	fs.BoolVar(&c.GenToken, "gen-token", false, "print a new random auth token and exit")
 	fs.BoolVar(&c.Update, "update", false, "replace this binary with the latest release (checked against its SHA256SUMS) and exit")
 
-	if err := errors.Join(b.errs...); err != nil {
-		return nil, err
-	}
 	if err := fs.Parse(args); err != nil {
 		return nil, err
 	}
@@ -283,9 +276,6 @@ func (c *Config) Finalize() error {
 		}
 	}
 
-	if c.MaxFileBytes <= 0 {
-		errs = append(errs, errors.New("--max-file-bytes must be positive"))
-	}
 	return errors.Join(errs...)
 }
 
@@ -298,7 +288,6 @@ func envName(flagName string) string {
 type binder struct {
 	fs     *flag.FlagSet
 	getenv func(string) string
-	errs   []error
 }
 
 func (b *binder) env(name string) (string, string, bool) {
@@ -313,18 +302,6 @@ func (b *binder) str(p *string, name, usage string) {
 		*p = v
 	}
 	b.fs.StringVar(p, name, *p, fmt.Sprintf("%s [%s]", usage, key))
-}
-
-func (b *binder) int64(p *int64, name, usage string) {
-	key, v, ok := b.env(name)
-	if ok {
-		parsed, err := strconv.ParseInt(v, 10, 64)
-		if err != nil {
-			b.errs = append(b.errs, fmt.Errorf("%s=%q: want an integer", key, v))
-		}
-		*p = parsed
-	}
-	b.fs.Int64Var(p, name, *p, fmt.Sprintf("%s [%s]", usage, key))
 }
 
 // Unless additive, the first flag replaces the environment/default value

@@ -22,6 +22,8 @@ const (
 	maxLineChars     = 2000
 	binarySniffBytes = 8000
 	maxReadOutput    = 256 << 10
+	// maxFileBytes is the largest file the file tools read, write or search.
+	maxFileBytes = 5 << 20
 )
 
 const (
@@ -84,7 +86,7 @@ func readLimit(r io.Reader, abs string, limit int64) ([]byte, error) {
 		return nil, err
 	}
 	if int64(len(data)) > limit {
-		return nil, fmt.Errorf("%s is larger than %d bytes (--max-file-bytes)", abs, limit)
+		return nil, fmt.Errorf("%s is larger than %d bytes", abs, limit)
 	}
 	return data, nil
 }
@@ -95,7 +97,7 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 		if in.Path == "" {
 			return nil, errors.New("path or paths is required")
 		}
-		return d.readOne(ctx, in.Path, in.StartLine, in.EndLine, maxReadOutput, d.Cfg.MaxFileBytes)
+		return d.readOne(ctx, in.Path, in.StartLine, in.EndLine, maxReadOutput, maxFileBytes)
 	case in.Path != "":
 		return nil, errors.New("give either path or paths, not both")
 	case len(in.Paths) > maxReadPaths:
@@ -130,7 +132,7 @@ func (d *Deps) readFile(ctx context.Context, _ *mcp.CallToolRequest, in readFile
 			break
 		}
 		share := min(max(budget/(len(in.Paths)-i), 4<<10), maxReadOutput, budget)
-		content, err := d.readOne(ctx, p, in.StartLine, in.EndLine, share, min(d.Cfg.MaxFileBytes, int64(budget)))
+		content, err := d.readOne(ctx, p, in.StartLine, in.EndLine, share, min(maxFileBytes, int64(budget)))
 		if err != nil {
 			if ctx.Err() != nil {
 				return nil, ctx.Err()
@@ -186,8 +188,8 @@ func (d *Deps) readOne(ctx context.Context, p string, startLine, endLine, maxOut
 	br := bufio.NewReaderSize(f, 64<<10)
 	head, _ := br.Peek(binarySniffBytes)
 	if mime := imageType(head); mime != "" {
-		if info.Size() > d.Cfg.MaxFileBytes {
-			return nil, fmt.Errorf("%s is a %d byte image; the limit is %d (--max-file-bytes)", r.Abs, info.Size(), d.Cfg.MaxFileBytes)
+		if info.Size() > maxFileBytes {
+			return nil, fmt.Errorf("%s is a %d byte image; the limit is %d", r.Abs, info.Size(), maxFileBytes)
 		}
 		if info.Size() > maxImage {
 			return nil, fmt.Errorf("%s is a %d byte image, more than is left for this call (%d bytes); read it on its own", r.Abs, info.Size(), maxImage)
@@ -219,7 +221,7 @@ func (d *Deps) readOne(ctx context.Context, p string, startLine, endLine, maxOut
 
 	// The total line count is reported for files up to --max-file-bytes; for
 	// larger ones (logs) reading stops after the requested range.
-	countAll := info.Size() <= d.Cfg.MaxFileBytes
+	countAll := info.Size() <= maxFileBytes
 	var out strings.Builder
 	lineNo, lastShown := 0, 0
 	outputFull, eof := false, false
@@ -255,7 +257,7 @@ func (d *Deps) readOne(ctx context.Context, p string, startLine, endLine, maxOut
 	}
 	shown := fmt.Sprintf("lines %d-%d of %d", start, lastShown, lineNo)
 	if !eof {
-		shown = fmt.Sprintf("lines %d-%d (total not counted: file is larger than %d bytes)", start, lastShown, d.Cfg.MaxFileBytes)
+		shown = fmt.Sprintf("lines %d-%d (total not counted: file is larger than %d bytes)", start, lastShown, maxFileBytes)
 	}
 	switch {
 	case lineNo == 0:

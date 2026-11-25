@@ -646,9 +646,11 @@ func TestSearchCRLFAndFileGlob(t *testing.T) {
 }
 
 func TestReadLargeFileStopsAfterRange(t *testing.T) {
-	h := newHarness(t, config.ModeRead, func(c *config.Config) { c.MaxFileBytes = 100 })
+	h := newHarness(t, config.ModeRead, nil)
+	// Over the 5 MiB limit for files read whole.
+	const n = 600_000
 	var b strings.Builder
-	for i := 1; i <= 200; i++ {
+	for i := 1; i <= n; i++ {
 		fmt.Fprintf(&b, "line %d\n", i)
 	}
 	if err := os.WriteFile(filepath.Join(h.dir, "big.log"), []byte(b.String()), 0o644); err != nil {
@@ -658,8 +660,8 @@ func TestReadLargeFileStopsAfterRange(t *testing.T) {
 	if !strings.Contains(out, "line 3") || strings.Contains(out, "line 4\n") || !strings.Contains(out, "total not counted") || !strings.Contains(out, "start_line=4") {
 		t.Errorf("large file: %s", out)
 	}
-	if out := h.ok("read_file", map[string]any{"path": "big.log", "start_line": 199}); !strings.Contains(out, "lines 199-200 of 200") {
-		t.Errorf("reading to the end counts the lines: %s", out)
+	if out := h.ok("read_file", map[string]any{"path": "big.log", "start_line": n - 1}); !strings.Contains(out, fmt.Sprintf("lines %d-%d of %d", n-1, n, n)) {
+		t.Errorf("reading to the end counts the lines: %.300s", out)
 	}
 }
 

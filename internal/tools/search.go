@@ -37,7 +37,7 @@ func registerSearch(s *mcp.Server, d *Deps) {
 		Title: "Search files",
 		Description: "Search file contents with a regular expression (RE2 syntax), or list files by glob when pattern is omitted. " +
 			"Output is grep-style: 'path:line:text' for matches and 'path-line-text' for context lines. " +
-			"Skips .git, binary files, files larger than the server's max_file_bytes and (by default) .gitignore'd paths.",
+			"Skips .git, binary files, files larger than 5 MiB and (by default) .gitignore'd paths.",
 		Annotations: readOnlyAnn,
 	}, func(in searchInput) map[string]any {
 		return map[string]any{"path": in.Path, "pattern": in.Pattern, "glob": in.Glob}
@@ -191,7 +191,7 @@ func (s *searcher) searchFile(fsys fs.FS, p, rel string) {
 		return
 	}
 	info, err := fs.Stat(fsys, p)
-	if err != nil || !info.Mode().IsRegular() || info.Size() > s.d.Cfg.MaxFileBytes {
+	if err != nil || !info.Mode().IsRegular() || info.Size() > maxFileBytes {
 		s.skipped++
 		return
 	}
@@ -200,7 +200,7 @@ func (s *searcher) searchFile(fsys fs.FS, p, rel string) {
 		s.skipped++
 		return
 	}
-	data, err := readLimit(f, p, s.d.Cfg.MaxFileBytes)
+	data, err := readLimit(f, p, maxFileBytes)
 	f.Close()
 	if err != nil {
 		s.skipped++

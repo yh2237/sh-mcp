@@ -96,8 +96,8 @@ func (d *Deps) writeFile(_ context.Context, req *mcp.CallToolRequest, in writeFi
 	if r.Rel == "." {
 		return "", fmt.Errorf("%s is an allowed root directory", r.Abs)
 	}
-	if int64(len(in.Content)) > d.Cfg.MaxFileBytes {
-		return "", fmt.Errorf("content is %d bytes; limit is %d (--max-file-bytes)", len(in.Content), d.Cfg.MaxFileBytes)
+	if int64(len(in.Content)) > maxFileBytes {
+		return "", fmt.Errorf("content is %d bytes; limit is %d", len(in.Content), maxFileBytes)
 	}
 	verb := "Create"
 	if _, err := r.Root.Lstat(r.Rel); err == nil {
@@ -138,14 +138,14 @@ func (d *Deps) editFile(_ context.Context, req *mcp.CallToolRequest, in editFile
 	if err := checkRegular(r.Abs, info); err != nil {
 		return "", err
 	}
-	if info.Size() > d.Cfg.MaxFileBytes {
-		return "", fmt.Errorf("%s is %d bytes; limit is %d (--max-file-bytes)", r.Abs, info.Size(), d.Cfg.MaxFileBytes)
+	if info.Size() > maxFileBytes {
+		return "", fmt.Errorf("%s is %d bytes; limit is %d", r.Abs, info.Size(), maxFileBytes)
 	}
 	f, err := r.Root.Open(r.Rel)
 	if err != nil {
 		return "", err
 	}
-	raw, err := readLimit(f, r.Abs, d.Cfg.MaxFileBytes)
+	raw, err := readLimit(f, r.Abs, maxFileBytes)
 	f.Close()
 	if err != nil {
 		return "", err
@@ -190,8 +190,8 @@ func (d *Deps) editFile(_ context.Context, req *mcp.CallToolRequest, in editFile
 	if bom {
 		content = utf8BOM + content
 	}
-	if int64(len(content)) > d.Cfg.MaxFileBytes {
-		return "", fmt.Errorf("result would be %d bytes; limit is %d (--max-file-bytes)", len(content), d.Cfg.MaxFileBytes)
+	if int64(len(content)) > maxFileBytes {
+		return "", fmt.Errorf("result would be %d bytes; limit is %d", len(content), maxFileBytes)
 	}
 	if err := d.approve(req, fmt.Sprintf("Edit %s? (%d replacement(s))\n%s", r.Abs, total, diff.String())); err != nil {
 		return "", err

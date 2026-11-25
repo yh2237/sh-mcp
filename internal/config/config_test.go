@@ -130,6 +130,7 @@ func TestInvalid(t *testing.T) {
 		{[]string{"--listen", DefaultListen}, nil, "--allow-dir"},
 		{[]string{"--listen", DefaultListen, "--allow-dir", "."}, nil, "--gen-token"},
 		{[]string{"--insecure-no-auth"}, nil, "not defined"},
+		{[]string{"--max-file-bytes", "100"}, nil, "not defined"},
 		{[]string{"--shell", "/bin/bash -c"}, nil, "not defined"},
 		{[]string{"--mode", "admin"}, nil, "--mode"},
 		{[]string{"--mode", "ops"}, nil, "--mode must be"},

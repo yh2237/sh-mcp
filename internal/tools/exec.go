@@ -196,7 +196,14 @@ func (d *Deps) launch(ctx context.Context, req *mcp.CallToolRequest, o jobs.Star
 		return "", ctx.Err()
 	}
 	info := j.Info()
-	data, next, dropped := j.Read(0, jobs.OutputBufferBytes)
+	// A finished command shows the beginning and end of all its output. A
+	// running one returns a contiguous first page, so that continuing from
+	// next with get_job_output does not skip anything.
+	readMax := maxResultBytes
+	if exited {
+		readMax = jobs.OutputBufferBytes
+	}
+	data, next, dropped := j.Read(0, readMax)
 	var b strings.Builder
 	if exited {
 		d.Jobs.Forget(j.ID)

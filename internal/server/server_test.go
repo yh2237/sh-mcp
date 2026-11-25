@@ -583,6 +583,33 @@ func TestBackgroundJobs(t *testing.T) {
 	}
 }
 
+func TestRunningJobOutputIsContiguous(t *testing.T) {
+	h := newHarness(t, config.ModeFull, nil)
+	script := "head -c 100000 /dev/zero | tr '\\0' x; echo; sleep 30"
+	if runtime.GOOS == "windows" {
+		script = "Write-Output ('x' * 100000); ping -n 30 127.0.0.1 > $null"
+	}
+	out := h.ok("run_shell", map[string]any{"script": script, "wait_sec": 3, "timeout_sec": 60})
+	t.Cleanup(func() { h.call("kill_job", map[string]any{"job_id": "job-1"}) })
+	m := regexp.MustCompile(`offset=(\d+)`).FindStringSubmatch(out)
+	if m == nil {
+		t.Fatalf("expected a running job: %.300s", out)
+	}
+	xs := func(s string) int {
+		_, body, _ := strings.Cut(s, "--- output ---\n")
+		return strings.Count(body, "x")
+	}
+	shown := xs(out)
+	next, _ := strconv.Atoi(m[1])
+	if next != shown {
+		t.Errorf("next offset %d but %d bytes of output shown: the rest would be skipped", next, shown)
+	}
+	rest := h.ok("get_job_output", map[string]any{"job_id": "job-1", "offset": next, "wait_sec": 0})
+	if total := shown + xs(rest); total != 100000 {
+		t.Errorf("read %d of 100000 bytes across both calls", total)
+	}
+}
+
 func TestMoveRefusesProtectedTree(t *testing.T) {
 	h := newHarness(t, config.ModeFull, func(c *config.Config) { c.DenyGlobs = append(c.DenyGlobs, "**/private/**") })
 	if err := os.MkdirAll(filepath.Join(h.dir, "private", "sub"), 0o755); err != nil {

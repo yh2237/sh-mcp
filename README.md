@@ -83,7 +83,6 @@ sh-mcp \
 * [ツール仕様](docs/tools.md)
 * [セキュリティ・OAuth・監査ログ](docs/security.md)
 * [運用・デプロイガイド](docs/deployment.md)
-* [エージェント向けセットアップガイド](docs/agent_setup.md): AI エージェントにインストールと設定を任せる場合は、このファイルを読ませてください。
 
 ## ライセンス
 

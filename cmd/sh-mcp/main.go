@@ -33,6 +33,10 @@ func main() {
 		if errors.Is(err, flag.ErrHelp) {
 			return
 		}
+		if errors.Is(err, server.ErrRestart) {
+			// Non-zero exit so supervisors with Restart=on-failure start the new binary.
+			os.Exit(75)
+		}
 		fmt.Fprintln(os.Stderr, "sh-mcp:", err)
 		os.Exit(1)
 	}

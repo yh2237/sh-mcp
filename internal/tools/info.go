@@ -28,6 +28,9 @@ func registerInfo(s *mcp.Server, d *Deps) {
 		Annotations: readOnlyAnn,
 	}, func(envInput) map[string]any { return nil }, func(_ context.Context, req *mcp.CallToolRequest, _ envInput) (string, error) {
 		var b strings.Builder
+		if d.Version != "" {
+			fmt.Fprintf(&b, "version: %s\n", d.Version)
+		}
 		host, _ := os.Hostname()
 		fmt.Fprintf(&b, "os: %s/%s\n", runtime.GOOS, runtime.GOARCH)
 		fmt.Fprintf(&b, "hostname: %s\n", host)

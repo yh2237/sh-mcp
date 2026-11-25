@@ -354,9 +354,9 @@ func TestToolsPerMode(t *testing.T) {
 		want    []string
 		notWant []string
 	}{
-		{config.ModeRead, nil, []string{"read_file", "search_files", "get_environment"}, []string{"write_file", "run_command", "get_job_output"}},
-		{config.ModeAsk, nil, []string{"write_file", "edit_file", "run_command", "run_shell", "kill_job", "start_mcp_server"}, nil},
-		{config.ModeFull, nil, []string{"write_file", "edit_file", "delete_file", "move_file", "run_command", "run_shell", "list_jobs"}, nil},
+		{config.ModeRead, nil, []string{"read_file", "search_files", "get_environment"}, []string{"write_file", "run_command", "get_job_output", "update_sh_mcp"}},
+		{config.ModeAsk, nil, []string{"write_file", "edit_file", "run_command", "run_shell", "kill_job", "start_mcp_server", "update_sh_mcp"}, nil},
+		{config.ModeFull, nil, []string{"write_file", "edit_file", "delete_file", "move_file", "run_command", "run_shell", "list_jobs", "update_sh_mcp"}, nil},
 	}
 	for _, c := range cases {
 		h := newHarness(t, c.mode, c.mutate)

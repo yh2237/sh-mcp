@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/auth"
@@ -23,7 +24,12 @@ import (
 	"github.com/yh2237/sh-mcp/internal/proxy"
 	"github.com/yh2237/sh-mcp/internal/security"
 	"github.com/yh2237/sh-mcp/internal/tools"
+	"github.com/yh2237/sh-mcp/internal/update"
 )
+
+// ErrRestart is returned by Run when update_sh_mcp requested a restart so a
+// service manager (e.g. systemd Restart=on-failure) starts the new binary.
+var ErrRestart = errors.New("restarting after update")
 
 const instructions = `sh-mcp gives you access to files (and, depending on its mode, commands) on the machine it runs on, like working in a terminal there.
 Start with get_environment to learn the OS, allowed directories, default directory, mode and installed tools.
@@ -32,11 +38,13 @@ Read files before editing them; edit_file needs exact old_text. Use git_status, 
 Depending on the mode, changes and commands may wait for the user's approval; if the user declines, do not retry the same action without asking.`
 
 type Server struct {
-	cfg    *config.Config
-	log    *slog.Logger
-	deps   *tools.Deps
-	server *mcp.Server
-	oauth  *oauth.Server
+	cfg         *config.Config
+	log         *slog.Logger
+	deps        *tools.Deps
+	server      *mcp.Server
+	oauth       *oauth.Server
+	restartCh   chan struct{}
+	restartOnce sync.Once
 }
 
 func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) {
@@ -72,7 +80,21 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 	// git is resolved once, like the auto-approved commands, so a git placed
 	// in a working directory or later on PATH is not picked up.
 	gitPath, _ := resolveProgram("git", "")
-	deps := &tools.Deps{Cfg: cfg, Guard: guard, Cmd: cmd, Jobs: jobs.NewManager(), Proxy: px, Audit: al, Git: gitPath}
+	srv := &Server{cfg: cfg, log: log, oauth: oa, restartCh: make(chan struct{})}
+	deps := &tools.Deps{
+		Version: version,
+		Cfg:     cfg,
+		Guard:   guard,
+		Cmd:     cmd,
+		Jobs:    jobs.NewManager(),
+		Proxy:   px,
+		Audit:   al,
+		Git:     gitPath,
+		Update: func(ctx context.Context) (update.Result, error) {
+			return update.Apply(ctx, update.Options{Current: version})
+		},
+		RequestRestart: srv.requestRestart,
+	}
 	s := mcp.NewServer(&mcp.Implementation{Name: "sh-mcp", Version: version}, &mcp.ServerOptions{
 		Instructions: instructions,
 		Logger:       log,
@@ -91,6 +113,7 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 		}
 	})
 	tools.Register(s, deps)
+	srv.deps, srv.server = deps, s
 
 	log.Info("sh-mcp configured",
 		"transport", cfg.Transport,
@@ -101,7 +124,7 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 		"oauth", oa != nil,
 		"tools", tools.ToolNames(cfg, gitPath != ""),
 	)
-	return &Server{cfg: cfg, log: log, deps: deps, server: s, oauth: oa}, nil
+	return srv, nil
 }
 
 // logClient records who connected and what the client says it supports, such
@@ -155,9 +178,31 @@ func (s *Server) Close() {
 	s.deps.Audit.Close()
 }
 
+func (s *Server) requestRestart() {
+	s.restartOnce.Do(func() {
+		s.log.Info("restarting after self-update")
+		close(s.restartCh)
+	})
+}
+
 func (s *Server) Run(ctx context.Context) error {
 	if s.cfg.Transport == config.TransportStdio {
-		return s.server.Run(ctx, &mcp.StdioTransport{})
+		runCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		go func() {
+			select {
+			case <-s.restartCh:
+				cancel()
+			case <-runCtx.Done():
+			}
+		}()
+		err := s.server.Run(runCtx, &mcp.StdioTransport{})
+		select {
+		case <-s.restartCh:
+			return ErrRestart
+		default:
+			return err
+		}
 	}
 	return s.runHTTP(ctx)
 }
@@ -214,15 +259,21 @@ func (s *Server) runHTTP(ctx context.Context) error {
 
 	errCh := make(chan error, 1)
 	go func() { errCh <- srv.Serve(ln) }()
+	restarting := false
 	select {
 	case err := <-errCh:
 		return err
+	case <-s.restartCh:
+		restarting = true
 	case <-ctx.Done():
 	}
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	if err := srv.Shutdown(shutdownCtx); err != nil && !errors.Is(err, context.DeadlineExceeded) {
 		return err
+	}
+	if restarting {
+		return ErrRestart
 	}
 	return nil
 }

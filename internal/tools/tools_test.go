@@ -9,6 +9,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unicode"
 	"unicode/utf8"
 
@@ -16,6 +17,7 @@ import (
 
 	"github.com/yh2237/sh-mcp/internal/config"
 	"github.com/yh2237/sh-mcp/internal/security"
+	"github.com/yh2237/sh-mcp/internal/update"
 )
 
 func TestReadLineTruncatesOnUTF8Boundary(t *testing.T) {
@@ -114,5 +116,58 @@ func TestWriteStdinSchemaHasNoControlChars(t *testing.T) {
 		if !strings.Contains(desc, want) {
 			t.Errorf("jsonschema tag missing %q: %q", want, desc)
 		}
+	}
+}
+
+func TestUpdateSelf(t *testing.T) {
+	restarted := make(chan struct{}, 1)
+	d := &Deps{
+		Cfg: &config.Config{Mode: config.ModeFull},
+		Update: func(context.Context) (update.Result, error) {
+			return update.Result{Updated: false, From: "v0.0.1", To: "v0.0.1", Exe: "/bin/sh-mcp"}, nil
+		},
+		RequestRestart: func() { restarted <- struct{}{} },
+		RestartDelay:   time.Millisecond,
+	}
+	out, err := d.updateSelf(context.Background(), nil, updateInput{Restart: true})
+	if err != nil {
+		t.Fatalf("already latest: %v", err)
+	}
+	if !strings.Contains(out, "already the latest") {
+		t.Errorf("unexpected output: %q", out)
+	}
+	select {
+	case <-restarted:
+		t.Fatal("must not restart when already on the latest release")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	d.Update = func(context.Context) (update.Result, error) {
+		return update.Result{Updated: true, From: "v0.0.1", To: "v0.0.2", Exe: "/bin/sh-mcp"}, nil
+	}
+	out, err = d.updateSelf(context.Background(), nil, updateInput{Restart: false})
+	if err != nil {
+		t.Fatalf("update without restart: %v", err)
+	}
+	if !strings.Contains(out, "v0.0.2") || !strings.Contains(out, "restart sh-mcp") {
+		t.Errorf("unexpected output: %q", out)
+	}
+	select {
+	case <-restarted:
+		t.Fatal("must not restart when restart=false")
+	case <-time.After(20 * time.Millisecond):
+	}
+
+	out, err = d.updateSelf(context.Background(), nil, updateInput{Restart: true})
+	if err != nil {
+		t.Fatalf("update with restart: %v", err)
+	}
+	if !strings.Contains(out, "exiting shortly") {
+		t.Errorf("unexpected output: %q", out)
+	}
+	select {
+	case <-restarted:
+	case <-time.After(time.Second):
+		t.Fatal("expected RequestRestart to be called")
 	}
 }

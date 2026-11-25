@@ -33,19 +33,36 @@ type Options struct {
 	Out     io.Writer
 }
 
+// Result describes the outcome of Apply.
+type Result struct {
+	Updated bool
+	From    string
+	To      string
+	Exe     string
+}
+
 // Run installs the latest release over the executable unless it already is
 // that version. A running server keeps using the old binary until restarted.
 func Run(ctx context.Context, o Options) error {
+	_, err := Apply(ctx, o)
+	return err
+}
+
+// Apply is Run, returning what version was installed.
+func Apply(ctx context.Context, o Options) (Result, error) {
+	if o.Out == nil {
+		o.Out = io.Discard
+	}
 	if o.BaseURL == "" {
 		o.BaseURL = DefaultBaseURL
 	}
 	if o.Exe == "" {
 		exe, err := os.Executable()
 		if err != nil {
-			return err
+			return Result{}, err
 		}
 		if o.Exe, err = filepath.EvalSymlinks(exe); err != nil {
-			return err
+			return Result{}, err
 		}
 	}
 	client := &http.Client{
@@ -55,11 +72,12 @@ func Run(ctx context.Context, o Options) error {
 	}
 	tag, err := latestTag(ctx, client, o)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
+	res := Result{From: o.Current, To: tag, Exe: o.Exe}
 	if tag == o.Current {
 		fmt.Fprintf(o.Out, "sh-mcp %s is already the latest release\n", tag)
-		return nil
+		return res, nil
 	}
 	asset := fmt.Sprintf("sh-mcp-%s-%s", runtime.GOOS, runtime.GOARCH)
 	if runtime.GOOS == "windows" {
@@ -69,25 +87,26 @@ func Run(ctx context.Context, o Options) error {
 	download := o.BaseURL + "/download/" + tag + "/"
 	sums, err := get(ctx, client, o, download+"SHA256SUMS", 1<<20)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	want, err := checksumFor(sums, asset)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	bin, err := get(ctx, client, o, download+asset, maxBinary)
 	if err != nil {
-		return err
+		return Result{}, err
 	}
 	sum := sha256.Sum256(bin)
 	if got := hex.EncodeToString(sum[:]); got != want {
-		return fmt.Errorf("checksum mismatch for %s (want %s, got %s); nothing was changed", asset, want, got)
+		return Result{}, fmt.Errorf("checksum mismatch for %s (want %s, got %s); nothing was changed", asset, want, got)
 	}
 	if err := replace(o.Exe, bin); err != nil {
-		return err
+		return Result{}, err
 	}
+	res.Updated = true
 	fmt.Fprintf(o.Out, "Updated %s from %s to %s. Restart sh-mcp to use it.\n", o.Exe, o.Current, tag)
-	return nil
+	return res, nil
 }
 
 // latestTag reads the tag that /releases/latest redirects to.

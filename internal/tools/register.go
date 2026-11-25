@@ -12,16 +12,21 @@ import (
 	"github.com/yh2237/sh-mcp/internal/jobs"
 	"github.com/yh2237/sh-mcp/internal/proxy"
 	"github.com/yh2237/sh-mcp/internal/security"
+	"github.com/yh2237/sh-mcp/internal/update"
 )
 
 type Deps struct {
-	Cfg       *config.Config
-	Guard     *security.Guard
-	Cmd       *security.CommandPolicy
-	Jobs      *jobs.Manager
-	Proxy     *proxy.Manager
-	Audit     *audit.Logger
-	approvals approvalStore
+	Version        string
+	Cfg            *config.Config
+	Guard          *security.Guard
+	Cmd            *security.CommandPolicy
+	Jobs           *jobs.Manager
+	Proxy          *proxy.Manager
+	Audit          *audit.Logger
+	Update         func(context.Context) (update.Result, error)
+	RequestRestart func()
+	RestartDelay   time.Duration
+	approvals      approvalStore
 
 	// Git is the absolute path of git, or "" when it is not installed (the
 	// git tools are then not offered).
@@ -40,6 +45,7 @@ func Register(s *mcp.Server, d *Deps) {
 	}
 	if d.Cfg.CanExec() {
 		registerExec(s, d)
+		registerUpdate(s, d)
 	}
 	if ProxyEnabled(d.Cfg) {
 		registerMCP(s, d)
@@ -61,7 +67,7 @@ func ToolNames(cfg *config.Config, git bool) []string {
 		names = append(names, "write_file", "edit_file", "delete_file", "move_file")
 	}
 	if cfg.CanExec() {
-		names = append(names, "run_command", "run_shell", "get_job_output", "write_stdin", "kill_job", "list_jobs")
+		names = append(names, "run_command", "run_shell", "get_job_output", "write_stdin", "kill_job", "list_jobs", "update_sh_mcp")
 	}
 	if ProxyEnabled(cfg) {
 		names = append(names, "list_mcp_servers", "list_mcp_tools", "call_mcp_tool")

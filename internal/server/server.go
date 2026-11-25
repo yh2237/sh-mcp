@@ -28,7 +28,7 @@ import (
 const instructions = `sh-mcp gives you access to files (and, depending on its mode, commands) on the machine it runs on, like working in a terminal there.
 Start with get_environment to learn the OS, allowed directories, default directory, mode and installed tools.
 Paths may be absolute or relative to the default directory; only paths inside the allowed directories are accessible.
-Read files before editing them; edit_file needs exact old_text. Commands that run longer than wait_sec keep running as background jobs: follow them with get_job_output.
+Read files before editing them; edit_file needs exact old_text. Use git_status, git_diff and git_log (read-only, no approval) rather than git through run_command. Commands that run longer than wait_sec keep running as background jobs: follow them with get_job_output.
 Depending on the mode, changes and commands may wait for the user's approval; if the user declines, do not retry the same action without asking.`
 
 type Server struct {
@@ -69,7 +69,10 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 			return nil, err
 		}
 	}
-	deps := &tools.Deps{Cfg: cfg, Guard: guard, Cmd: cmd, Jobs: jobs.NewManager(), Proxy: px, Audit: al}
+	// git is resolved once, like the auto-approved commands, so a git placed
+	// in a working directory or later on PATH is not picked up.
+	gitPath, _ := resolveProgram("git", "")
+	deps := &tools.Deps{Cfg: cfg, Guard: guard, Cmd: cmd, Jobs: jobs.NewManager(), Proxy: px, Audit: al, Git: gitPath}
 	s := mcp.NewServer(&mcp.Implementation{Name: "sh-mcp", Version: version}, &mcp.ServerOptions{
 		Instructions: instructions,
 		Logger:       log,
@@ -94,7 +97,7 @@ func New(cfg *config.Config, version string, log *slog.Logger) (*Server, error) 
 		"mode", cfg.Mode,
 		"allowed_dirs", guard.Dirs(),
 		"oauth", oa != nil,
-		"tools", tools.ToolNames(cfg),
+		"tools", tools.ToolNames(cfg, gitPath != ""),
 	)
 	return &Server{cfg: cfg, log: log, deps: deps, server: s, oauth: oa}, nil
 }

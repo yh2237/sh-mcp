@@ -21,12 +21,18 @@ type Deps struct {
 	Jobs  *jobs.Manager
 	Proxy *proxy.Manager
 	Audit *audit.Logger
+	// Git is the absolute path of git, or "" when it is not installed (the
+	// git tools are then not offered).
+	Git string
 }
 
 func Register(s *mcp.Server, d *Deps) {
 	registerInfo(s, d)
 	registerRead(s, d)
 	registerSearch(s, d)
+	if d.Git != "" {
+		registerGit(s, d)
+	}
 	if d.Cfg.CanWrite() {
 		registerWrite(s, d)
 	}
@@ -44,8 +50,11 @@ func ProxyEnabled(cfg *config.Config) bool {
 	return len(cfg.MCPServers) > 0 || cfg.CanExec()
 }
 
-func ToolNames(cfg *config.Config) []string {
+func ToolNames(cfg *config.Config, git bool) []string {
 	names := []string{"get_environment", "read_file", "list_dir", "search_files"}
+	if git {
+		names = append(names, "git_status", "git_diff", "git_log")
+	}
 	if cfg.CanWrite() {
 		names = append(names, "write_file", "edit_file", "delete_file", "move_file")
 	}

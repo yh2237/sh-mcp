@@ -12,6 +12,7 @@
 | `read_file` | ○ | ○ | ○ | 行番号付きで読む（画像も可） |
 | `list_dir` | ○ | ○ | ○ | ディレクトリの一覧 |
 | `search_files` | ○ | ○ | ○ | 正規表現で検索、glob でファイル一覧 |
+| `git_status` / `git_diff` / `git_log` | ○ | ○ | ○ | git の状態・差分・履歴（読み取り専用。git がある場合のみ） |
 | `write_file` / `edit_file` | — | △ | ○ | 新規作成・全文上書き / 文字列を置換して diff を返す |
 | `delete_file` / `move_file` | — | △ | ○ | 削除 / 移動・名前変更 |
 | `run_command` | — | △（`--auto-approve-command` は ○） | ○ | シェルを介さずコマンド実行 |
@@ -57,6 +58,14 @@
 | `respect_gitignore` | `bool` | — | `.gitignore` の対象を除く（既定 `true`） |
 
 `pattern` を省くと `glob` に一致するファイル名の一覧を返します。`.git` とバイナリファイルは対象外です。
+
+## git（全モード）
+
+sh-mcp が引数を固定して git を実行するので、読み取り専用で、どのモードでも承認なしで使えます。`path` は対象のファイルかディレクトリで、その中の変更・履歴だけを表示します（既定 `default_dir`）。`--deny-glob` で保護されたファイルは、一覧からも差分からも除きます。
+
+* `git_status`: `path`。ブランチと、変更・ステージ済み・未追跡のファイル（`git status --short --branch`）。
+* `git_diff`: `path`、`staged`（ステージ済みの差分）、`base`（比べるリビジョン。例 `HEAD`・`main`）、`target`（`base` と比べる2つ目のリビジョン）、`stat_only`（ファイルごとの増減行数だけ）。
+* `git_log`: `path`、`revision`（例 `main`・`HEAD~5..HEAD`）、`max_count`（`1`〜`200`、既定 `20`）、`patch`（各コミットの差分も表示）。
 
 ## ファイルの編集（`ask` / `full`）
 
